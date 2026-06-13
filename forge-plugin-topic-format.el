@@ -134,10 +134,10 @@ configured for that type, SLUG is returned unchanged."
 (defun forge-plugin-topic-format-enable ()
   "Enable topic line formatting customization."
   (interactive)
-  (advice-add 'forge--format-topic-slug :around
-              #'forge-plugin--format-topic-slug)
-  (advice-add 'forge--format-topic-line :around
-              #'forge-plugin--format-topic-line))
+  (setq forge-plugin-topic-format-enable t))
+
+(advice-add 'forge--format-topic-slug :around #'forge-plugin--format-topic-slug)
+(advice-add 'forge--format-topic-line :around #'forge-plugin--format-topic-line)
 
 (provide 'forge-plugin-topic-format)
 ;;; forge-plugin-topic-format.el ends here

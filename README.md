@@ -3,6 +3,31 @@
 A collection of plugins to improve [`forge`](https://github.com/magit/forge).
 The `magit` maintainer is difficult to work with, so I'll be my own dictator.
 
+# Usage
+
+```elisp
+(require 'forge-plugins)
+```
+
+Each plugin installs its advice at load time.  Set a plugin's flag
+variable to `t` to activate it:
+
+```elisp
+(setq forge-plugin-topic-format-enable t)
+```
+
+With `use-package`:
+
+```elisp
+(use-package forge-plugins
+  :variables
+  forge-plugin-topic-format-enable t)
+```
+
+You can also enable a plugin via Customize or its `-enable` function.
+
+# Plugins
+
 ## Topic Format
 
 Customize the display of topic lines in `forge` topic and notification lists.
@@ -10,11 +35,6 @@ Customize the display of topic lines in `forge` topic and notification lists.
 **Flag:** `forge-plugin-topic-format-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
-
-### Usage
-
-`forge-plugin-topic-format-enable` to activate (or set
-`forge-plugin-topic-format-enable` via Customize).
 
 ### Customization
 
@@ -33,9 +53,9 @@ Default: `%R%s %t`
 symbols.  When non-nil, the forge's leading character is replaced
 at display time.  Example:
 
-  ```elisp
-  (setq forge-plugin-topic-slug-symbols
-        '((forge-issue    . nil)   ; keep "#" from forge
-          (forge-pullreq  . "!")
-          (forge-discussion . "@")))
-  ```
+```elisp
+(setq forge-plugin-topic-slug-symbols
+      '((forge-issue    . "#")
+        (forge-pullreq  . "!")
+        (forge-discussion . "@")))
+```

@@ -22,8 +22,9 @@
 ;;; Commentary:
 
 ;; This package provides a collection of plugins that extend
-;; `forge'.  Loading this file enables all available plugins;
-;; individual plugins can also be loaded separately.
+;; `forge'.  Set each plugin's flag variable to `t' to enable it.
+;; Each plugin installs its advice at load time and checks its flag
+;; at runtime.
 
 ;;; Code:
 
