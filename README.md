@@ -6,7 +6,7 @@ The `magit` maintainer is difficult to work with, so I'll be my own dictator.
 # Usage
 
 ```elisp
-(require 'forge-plugins)
+(require 'magit-forge-plugins)
 ```
 
 Each plugin installs its advice at load time.  Set a plugin's flag
@@ -19,8 +19,8 @@ variable to `t` to activate it:
 With `use-package`:
 
 ```elisp
-(use-package forge-plugins
-  :variables
+(use-package magit-forge-plugins
+  :custom
   forge-plugin-topic-format-enable t)
 ```
 

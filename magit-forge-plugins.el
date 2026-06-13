@@ -1,4 +1,4 @@
-;;; forge-plugins.el --- Collection of plugins for forge  -*- lexical-binding: t; -*-
+;;; magit-forge-plugins.el --- Collection of plugins for forge  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  drlkf
 
@@ -30,5 +30,5 @@
 
 (require 'forge-plugin-topic-format)
 
-(provide 'forge-plugins)
-;;; forge-plugins.el ends here
+(provide 'magit-forge-plugins)
+;;; magit-forge-plugins.el ends here

@@ -27,7 +27,7 @@
 
 ;;; Code:
 
-(require 'forge)
+(require 'forge nil t)
 
 (defconst forge-plugin-topic-format-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
