@@ -32,17 +32,6 @@
 (defconst forge-plugin-topic-format-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
 
-;;;###autoload
-(defcustom forge-plugin-topic-format-enable nil
-  "Whether to enable topic line formatting customization."
-  :package-version '(forge-plugin-topic-format . "0.1.0")
-  :group 'forge
-  :type 'boolean
-  :set (lambda (sym val)
-         (set-default sym val)
-         (when val
-           (forge-plugin-topic-format-enable))))
-
 (defcustom forge-plugin-topic-line-format "%R%s %t"
   "Format for topic lines in topic and notification lists.
 
@@ -86,9 +75,10 @@ discussions with an at-sign prefix."
                                     string)))
 
 (defun forge-plugin--apply-topic-slug-symbol (topic slug)
-  "Return SLUG with its leading symbol replaced per `forge-plugin-topic-slug-symbols'.
-The replacement is chosen based on the type of TOPIC. If no symbol is
-configured for that type, SLUG is returned unchanged."
+  "Return SLUG with its leading symbol replaced.
+The replacement is chosen based on the type of TOPIC per
+`forge-plugin-topic-slug-symbols'. If no symbol is configured
+for that type, SLUG is returned unchanged."
   (let* ((sym (cdr (assq (cond ((forge-discussion-p topic) 'forge-discussion)
                                ((forge-pullreq-p topic) 'forge-pullreq)
                                ((forge-issue-p topic) 'forge-issue))
@@ -134,10 +124,33 @@ configured for that type, SLUG is returned unchanged."
 (defun forge-plugin-topic-format-enable ()
   "Enable topic line formatting customization."
   (interactive)
-  (setq forge-plugin-topic-format-enable t))
+  (setq forge-plugin-topic-format-enable t)
+  (advice-add 'forge--format-topic-slug :around #'forge-plugin--format-topic-slug)
+  (advice-add 'forge--format-topic-line :around #'forge-plugin--format-topic-line))
 
-(advice-add 'forge--format-topic-slug :around #'forge-plugin--format-topic-slug)
-(advice-add 'forge--format-topic-line :around #'forge-plugin--format-topic-line)
+;;;###autoload
+(defun forge-plugin-topic-format-disable ()
+  "Disable topic line formatting customization."
+  (interactive)
+  (setq forge-plugin-topic-format-enable nil)
+  (advice-remove 'forge--format-topic-slug #'forge-plugin--format-topic-slug)
+  (advice-remove 'forge--format-topic-line #'forge-plugin--format-topic-line))
+
+;;;###autoload
+(defcustom forge-plugin-topic-format-enable nil
+  "Whether to enable topic line formatting customization."
+  :package-version '(forge-plugin-topic-format . "0.1.0")
+  :group 'forge
+  :type 'boolean
+  :set (lambda (sym val)
+         (set-default sym val)
+         (when (featurep 'forge-plugin-topic-format)
+           (if val
+               (forge-plugin-topic-format-enable)
+             (forge-plugin-topic-format-disable)))))
+
+(when forge-plugin-topic-format-enable
+  (forge-plugin-topic-format-enable))
 
 (provide 'forge-plugin-topic-format)
 ;;; forge-plugin-topic-format.el ends here

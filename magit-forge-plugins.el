@@ -29,6 +29,16 @@
 ;;; Code:
 
 (require 'forge-plugin-topic-format)
+(require 'forge-plugin-github-actions)
+
+;;;###autoload
+(defun forge-plugins-enable ()
+  "Enable all plugins according to their feature flag."
+  (interactive)
+  (when forge-plugin-topic-format-enable
+    (forge-plugin-topic-format-enable))
+  (when forge-plugin-github-actions-enable
+    (forge-plugin-github-actions-enable)))
 
 (provide 'magit-forge-plugins)
 ;;; magit-forge-plugins.el ends here
