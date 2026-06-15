@@ -43,8 +43,28 @@ If non-nil, debug logs are written to the buffer
   :group 'forge
   :type 'boolean)
 
+;;;###autoload
+(defcustom forge-plugins-github-actions-max-concurrent-requests 6
+  "Maximum number of check-run fetches to run concurrently.
+Pending fetches beyond this limit are queued and dispatched as
+in-flight requests complete.  This bounds parallelism so the
+GitHub API is not hammered while keeping fetches concurrent."
+  :package-version '(forge-plugins-github-actions . "0.1.0")
+  :group 'forge
+  :type 'integer)
+
+;;;###autoload
+(defcustom forge-plugins-github-actions-refresh-delay 0.3
+  "Delay in seconds before refreshing buffers after a fetch completes.
+Multiple fetch completions within this window are coalesced into a
+single buffer refresh to avoid blocking Emacs with a refresh storm."
+  :package-version '(forge-plugins-github-actions . "0.1.0")
+  :group 'forge
+  :type 'number)
+
 (defun forge-plugins-github-actions--debug (format-string &rest args)
-  "Log a message to the debug buffer if debug logging is enabled."
+  "Log a message to the debug buffer if debug logging is enabled.
+FORMAT-STRING and ARGS are passed to `format'."
   (when forge-plugins-github-actions-debug
     (let ((buf (get-buffer-create "*forge-plugins-github-actions-debug*")))
       (with-current-buffer buf
@@ -116,8 +136,66 @@ Values are log strings.")
                 (derived-mode-p 'forge-pullreq-mode))
         (magit-refresh-buffer)))))
 
+(defvar forge-plugins-github-actions--refresh-timer nil
+  "Pending timer used to coalesce buffer refreshes.")
+
+(defun forge-plugins-github-actions--schedule-refresh ()
+  "Schedule a debounced refresh of Magit and Forge buffers.
+Multiple calls within `forge-plugins-github-actions-refresh-delay'
+seconds are coalesced into a single refresh so that a burst of
+fetch completions does not trigger a refresh storm."
+  (when (timerp forge-plugins-github-actions--refresh-timer)
+    (cancel-timer forge-plugins-github-actions--refresh-timer))
+  (setq forge-plugins-github-actions--refresh-timer
+        (run-with-timer
+         forge-plugins-github-actions-refresh-delay nil
+         (lambda ()
+           (setq forge-plugins-github-actions--refresh-timer nil)
+           (forge-plugins-github-actions--refresh-buffers)))))
+
+(defvar forge-plugins-github-actions--queue nil
+  "FIFO list of topics pending a check-run fetch.")
+
+(defvar forge-plugins-github-actions--inflight 0
+  "Number of check-run fetches currently in flight.")
+
+(defvar forge-plugins-github-actions--dispatch-timer nil
+  "Pending timer used to drain the fetch queue off the redisplay path.")
+
+(defun forge-plugins-github-actions--enqueue (topic)
+  "Queue TOPIC for a check-run fetch and schedule the queue to drain.
+The actual dispatch happens from a timer so that no network setup
+work is performed during buffer redisplay."
+  (setq forge-plugins-github-actions--queue
+        (nconc forge-plugins-github-actions--queue (list topic)))
+  (unless (timerp forge-plugins-github-actions--dispatch-timer)
+    (setq forge-plugins-github-actions--dispatch-timer
+          (run-with-timer
+           0 nil
+           (lambda ()
+             (setq forge-plugins-github-actions--dispatch-timer nil)
+             (forge-plugins-github-actions--dispatch))))))
+
+(defun forge-plugins-github-actions--dispatch ()
+  "Dispatch queued fetches up to the concurrency limit.
+Pops topics off `forge-plugins-github-actions--queue' and fires a
+fetch for each, as long as the number of in-flight requests stays
+below `forge-plugins-github-actions-max-concurrent-requests'."
+  (while (and forge-plugins-github-actions--queue
+              (< forge-plugins-github-actions--inflight
+                 forge-plugins-github-actions-max-concurrent-requests))
+    (let ((topic (pop forge-plugins-github-actions--queue)))
+      (cl-incf forge-plugins-github-actions--inflight)
+      (forge-plugins-github-actions--fetch topic))))
+
+(defun forge-plugins-github-actions--fetch-done ()
+  "Account for a completed fetch and dispatch any queued ones."
+  (when (> forge-plugins-github-actions--inflight 0)
+    (cl-decf forge-plugins-github-actions--inflight))
+  (forge-plugins-github-actions--dispatch))
+
 (defun forge-plugins-github-actions--fetch (topic)
-  "Fetch GitHub Actions check runs for TOPIC asynchronously."
+  "Fetch GitHub Actions check-run results for TOPIC asynchronously."
   (let ((id (oref topic id))
         (head-rev (oref topic head-rev)))
     (forge-plugins-github-actions--debug
@@ -144,7 +222,8 @@ Values are log strings.")
                          :runs runs
                          :fetching nil)
                    forge-plugins-github-actions--cache)
-          (forge-plugins-github-actions--refresh-buffers)))
+          (forge-plugins-github-actions--fetch-done)
+          (forge-plugins-github-actions--schedule-refresh)))
       :errorback
       (lambda (err _headers _status _req)
         (forge-plugins-github-actions--debug
@@ -157,7 +236,8 @@ Values are log strings.")
                        :fetching nil
                        :error t)
                  forge-plugins-github-actions--cache)
-        (forge-plugins-github-actions--refresh-buffers)))))
+        (forge-plugins-github-actions--fetch-done)
+        (forge-plugins-github-actions--schedule-refresh)))))
 
 (defun forge-plugins-github-actions--get-status-string (topic)
   "Return the formatted status string for TOPIC, triggering a fetch if needed."
@@ -192,11 +272,13 @@ Values are log strings.")
          "Cache miss for topic %s (head-rev: %s), triggering fetch" id head-rev))
       (puthash id
                (list :head-rev head-rev :fetching t) forge-plugins-github-actions--cache)
-      (forge-plugins-github-actions--fetch topic)
+      (forge-plugins-github-actions--enqueue topic)
       nil))))
 
 (defun forge-plugins-github-actions--format-topic-line (orig-fun topic &optional width)
-  "Advice to append GitHub Actions status to the topic line."
+  "Around advice to append GitHub Actions status to the topic line.
+ORIG-FUN is the advised function, called with TOPIC and WIDTH; its
+result has the status string appended for GitHub pull requests."
   (let ((line (funcall orig-fun topic width)))
     (if (and forge-plugins-github-actions-enable
              (forge-pullreq-p topic)
@@ -208,7 +290,8 @@ Values are log strings.")
       line)))
 
 (defun forge-plugins-github-actions-insert-headers (&optional topic)
-  "Insert GitHub Actions status headers into the topic view."
+  "Insert GitHub Actions status headers into the topic view.
+TOPIC defaults to `forge-buffer-topic' when nil."
   (let ((topic (or topic forge-buffer-topic)))
     (when (and forge-plugins-github-actions-enable
                (forge-pullreq-p topic)
@@ -260,7 +343,9 @@ Values are log strings.")
     (obj-or-host method resource
                  &optional params
                  &key callback errorback noerror unpaginate reader)
-  "Like `forge--rest' but supports a custom READER."
+  "Like `forge--rest' but supports a custom READER.
+OBJ-OR-HOST, METHOD, RESOURCE, PARAMS, CALLBACK, ERRORBACK, NOERROR
+and UNPAGINATE are as in `forge--rest'."
   (pcase-let ((`(,host ,forge) (forge--host-arguments obj-or-host)))
     (ghub-request method
       (if (cl-typep obj-or-host 'forge-object)
@@ -526,8 +611,9 @@ If FORCE is nil and the logs are cached, use the cached logs."
                 (puthash id
                          (plist-put cached :fetching t)
                          forge-plugins-github-actions--cache)
-                (forge-plugins-github-actions--refresh-buffers)))
-            (run-with-timer 2 nil #'forge-plugins-github-actions--fetch topic))
+                (forge-plugins-github-actions--schedule-refresh)))
+            (run-with-timer
+             2 nil #'forge-plugins-github-actions--enqueue topic))
           :errorback
           (lambda (err &rest _)
             (let ((msg (or (alist-get 'message err) "Unknown error")))
