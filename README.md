@@ -63,9 +63,9 @@ at display time.  Example:
 
 ## GitHub Actions
 
-Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions are listed under the collapsible `Actions:` header (with `TAB`, default expanded), and each individual action line is fully interactible across its whole width including the indentation.
+Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions are listed under the collapsible `Actions` section (with `TAB`, default expanded), placed directly after the `Commits` section, and each individual action line is fully interactible across its whole width including the indentation. The same summary is also appended to the `Actions` section heading in `forge-pullreq-mode`.
 
-The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the number of failed ones. When some check runs were skipped, a `[z]` suffix is appended showing the total number of runs including skipped ones, e.g. `(3/1) [6]`.
+The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the number of non-skipped check runs, e.g. `(3/4)` for four relevant runs of which three succeeded.
 
 **Flag:** `forge-plugins-github-actions-enable` (default `nil`)
 

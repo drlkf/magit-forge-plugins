@@ -260,21 +260,20 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
        ((plist-get cached :fetching) nil)
        ((plist-get cached :error) nil)
        (t
-        (let ((total (plist-get cached :total))
-              (success (plist-get cached :success))
-              (failure (or (plist-get cached :failure) 0))
-              (skipped (or (plist-get cached :skipped) 0)))
+        (let* ((total (plist-get cached :total))
+               (success (plist-get cached :success))
+               (failure (or (plist-get cached :failure) 0))
+               (skipped (or (plist-get cached :skipped) 0))
+               (relevant (and total (- total skipped))))
           (forge-plugins-github-actions--debug
            "Cache hit for topic %s (head-rev: %s): total=%s, success=%s, failure=%s, skipped=%s"
            id head-rev total success failure skipped)
-          (if (and total (> total 0))
+          (if (and relevant (> relevant 0))
               (let* ((face (cond
                             ((> failure 0) 'forge-plugins-github-actions-failure)
-                            ((= success total) 'forge-plugins-github-actions-success)
+                            ((= success relevant) 'forge-plugins-github-actions-success)
                             (t 'forge-plugins-github-actions-warning)))
-                     (str (if (> skipped 0)
-                              (format "(%d/%d) [%d]" success failure total)
-                            (format "(%d/%d)" success failure))))
+                     (str (format "(%d/%d)" success relevant)))
                 (propertize str 'face face))
             nil)))))
      (t
@@ -303,58 +302,68 @@ result has the status string appended for GitHub pull requests."
             line))
       line)))
 
-(defun forge-plugins-github-actions-insert-headers (&optional topic)
-  "Insert GitHub Actions status headers into the topic view.
-TOPIC defaults to `forge-buffer-topic' when nil."
-  (let ((topic (or topic forge-buffer-topic)))
-    (when (and forge-plugins-github-actions-enable
-               (forge-pullreq-p topic)
-               (cl-typep (forge-get-repository topic) 'forge-github-repository))
-      (let* ((id (oref topic id))
-             (head-rev (oref topic head-rev))
-             (cached (gethash id forge-plugins-github-actions--cache)))
-        (magit-insert-section (github-actions-headers)
-          (magit-insert-heading (capitalize (string-pad "Actions: " 11)))
-          (magit-insert-section-body
+(defun forge-plugins-github-actions--insert-commits-actions (post &optional topic)
+  "Insert a GitHub Actions section as a sibling after the Commits section.
+This is `:before' advice for `forge-insert-post'.  POST and TOPIC are
+the advised function's arguments; the section is only inserted before
+the topic's own description post, i.e. when TOPIC is nil and POST is a
+GitHub pull request."
+  (when (and (null topic)
+             forge-plugins-github-actions-enable
+             (forge-pullreq-p post)
+             (cl-typep (forge-get-repository post) 'forge-github-repository))
+    (let* ((topic post)
+           (id (oref topic id))
+           (head-rev (oref topic head-rev))
+           (cached (gethash id forge-plugins-github-actions--cache)))
+      (magit-insert-section (github-actions)
+        (magit-insert-heading
+          (let ((summary (forge-plugins-github-actions--get-status-string topic)))
+            (if summary
+                (concat (magit--propertize-face "Actions " 'magit-section-heading)
+                        summary)
+              "Actions")))
+        (magit-insert-section-body
+          (cond
+           ((and cached (equal (plist-get cached :head-rev) head-rev))
             (cond
-             ((and cached (equal (plist-get cached :head-rev) head-rev))
-              (cond
-               ((plist-get cached :error)
-                (insert
-                 (magit--propertize-face "error" 'forge-plugins-github-actions-failure)
-                 "\n"))
-               (t
-                (if-let* ((runs (plist-get cached :runs)))
-                    (dolist (run runs)
-                      (let* ((name (alist-get 'name run))
-                             (status (alist-get 'status run))
-                             (conclusion (alist-get 'conclusion run))
-                             (status-str (if (equal status "completed")
-                                             conclusion
-                                           status))
-                             (face (cond
-                                    ((equal conclusion "success")
-                                     'forge-plugins-github-actions-success)
-                                    ((member conclusion
-                                             '("failure" "timed_out" "action_required"))
-                                     'forge-plugins-github-actions-failure)
-                                    (t 'forge-plugins-github-actions-warning)))
-                             (beg (point)))
-                        (insert "  ")
-                        (insert (propertize (format "%-10s" status-str) 'face face))
-                        (insert " ")
-                        (insert (propertize name 'face 'magit-section-highlight))
-                        (insert "\n")
-                        (add-text-properties
-                         beg (point)
-                         (list 'forge-plugins-github-actions-run run
-                               'keymap forge-plugins-github-action-section-map))))
-                  (insert (magit--propertize-face "none" 'magit-dimmed) "\n")))))
-             ((and cached (plist-get cached :fetching))
-              (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n"))
+             ((plist-get cached :error)
+              (insert
+               (magit--propertize-face "error" 'forge-plugins-github-actions-failure)
+               "\n"))
              (t
-              (forge-plugins-github-actions--get-status-string topic)
-              (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n")))))))))
+              (if-let* ((runs (plist-get cached :runs)))
+                  (dolist (run runs)
+                    (let* ((name (alist-get 'name run))
+                           (status (alist-get 'status run))
+                           (conclusion (alist-get 'conclusion run))
+                           (status-str (if (equal status "completed")
+                                           conclusion
+                                         status))
+                           (face (cond
+                                  ((equal conclusion "success")
+                                   'forge-plugins-github-actions-success)
+                                  ((member conclusion
+                                           '("failure" "timed_out" "action_required"))
+                                   'forge-plugins-github-actions-failure)
+                                  (t 'forge-plugins-github-actions-warning)))
+                           (beg (point)))
+                      (insert "  ")
+                      (insert (propertize (format "%-10s" status-str) 'face face))
+                      (insert " ")
+                      (insert (propertize name 'face 'magit-section-highlight))
+                      (insert "\n")
+                      (add-text-properties
+                       beg (point)
+                       (list 'forge-plugins-github-actions-run run
+                             'keymap forge-plugins-github-action-section-map))))
+                (insert (magit--propertize-face "none" 'magit-dimmed) "\n")))))
+           ((and cached (plist-get cached :fetching))
+            (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n"))
+           (t
+            (forge-plugins-github-actions--get-status-string topic)
+            (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n")))
+          (insert "\n"))))))
 
 (cl-defun forge-plugins-github-actions--rest-raw
     (obj-or-host method resource
@@ -643,15 +652,16 @@ If FORCE is nil and the logs are cached, use the cached logs."
   (setq forge-plugins-github-actions-enable t)
   (advice-add 'forge--format-topic-line
               :around #'forge-plugins-github-actions--format-topic-line)
-  (add-to-list 'forge-pullreq-headers-hook 'forge-plugins-github-actions-insert-headers))
+  (advice-add 'forge-insert-post
+              :before #'forge-plugins-github-actions--insert-commits-actions))
 
 ;;;###autoload
 (defun forge-plugins-github-actions-disable ()
   "Disable GitHub Actions status integration."
   (interactive)
-  (setq forge-plugins-github-actions-enable nil
-        forge-pullreq-headers-hook
-        (delete 'forge-plugins-github-actions-insert-headers forge-pullreq-headers-hook))
+  (setq forge-plugins-github-actions-enable nil)
+  (advice-remove 'forge-insert-post
+                 #'forge-plugins-github-actions--insert-commits-actions)
   (advice-remove 'forge--format-topic-line
                  #'forge-plugins-github-actions--format-topic-line))
 
