@@ -414,8 +414,17 @@ and UNPAGINATE are as in `forge--rest'."
 (defvar-keymap forge-plugins-github-actions-log-mode-map
   :doc "Keymap for `forge-plugins-github-actions-log-mode'."
   :parent magit-section-mode-map
-  "b" #'forge-plugins-github-actions-log-browse-url
+  "B" #'forge-plugins-github-actions-log-browse-url
   "r" #'revert-buffer)
+
+;; Under `evil', the log buffer inherits `special-mode''s motion state, where
+;; `B' and `r' would otherwise be shadowed by the global motion/normal maps.
+;; Bind them in those states so they win.
+(with-eval-after-load 'evil
+  (evil-define-key '(motion normal) forge-plugins-github-actions-log-mode-map
+    "B" #'forge-plugins-github-actions-log-browse-url
+    "r" #'revert-buffer
+    "q" #'quit-window))
 
 (define-derived-mode forge-plugins-github-actions-log-mode magit-section-mode "GH-Action-Log"
   "Major mode for viewing GitHub Action job logs.

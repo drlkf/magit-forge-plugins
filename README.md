@@ -99,9 +99,11 @@ When inside a pull request topic view, the following keybindings are available o
 
 When viewing the logs inside Emacs, the following keybindings are available:
 
-- `b` -- Open the action's logs in your browser.
+- `B` -- Open the action's logs in your browser.
 - `r` -- Refresh/revert the logs just-in-time (bypasses the cache and fetches the latest logs).
 - `q` -- Bury/quit the log buffer.
+
+Under `evil`, these keys are bound in the motion and normal states so they take precedence over the global vim bindings. `SPC` is left untouched, so any leader key bound to it keeps working, and `b` remains the usual `evil-backward-word-begin` motion.
 
 ## Pull Request Commits
 
