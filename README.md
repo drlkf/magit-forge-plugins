@@ -103,6 +103,8 @@ When viewing the logs inside Emacs, the following keybindings are available:
 - `r` -- Refresh/revert the logs just-in-time (bypasses the cache and fetches the latest logs).
 - `q` -- Bury/quit the log buffer.
 
+The log viewer renders the runner's workflow command markers close to GitHub's web rendering: `##[group]`/`##[endgroup]` become collapsible sections, `##[section]` lines are shown as bold section headers, `##[command]` lines are highlighted and prefixed with `>`, and `##[error]`/`##[warning]`/`##[notice]`/`##[debug]` are labelled and faced accordingly. The runner form (`##[...]`) and the action form with fewer or no leading hashes (e.g. `[command]` emitted by `actions/checkout`) are all recognized.
+
 Under `evil`, these keys are bound in the motion and normal states so they take precedence over the global vim bindings. `SPC` is left untouched, so any leader key bound to it keeps working, and `b` remains the usual `evil-backward-word-begin` motion.
 
 ## Pull Request Commits

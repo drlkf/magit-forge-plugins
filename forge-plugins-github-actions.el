@@ -100,6 +100,11 @@ FORMAT-STRING and ARGS are passed to `format'."
   "Face for command lines in GitHub Actions logs."
   :group 'forge)
 
+(defface forge-plugins-github-actions-log-section
+  '((t :inherit magit-section-secondary-heading))
+  "Face for section header lines in GitHub Actions logs."
+  :group 'forge)
+
 (defvar forge-plugins-github-actions--cache (make-hash-table :test 'equal)
   "Cache of GitHub Actions status for pull requests.
 Keys are topic IDs.
@@ -440,29 +445,25 @@ Keybindings:
     (when (string-match "^\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T\\)\\([0-9]\\{2\\}:[0-9]\\{2\\}:[0-9]\\{2\\}\\)\\(\\.[0-9]+Z\\)? " line)
       (setq time-str (match-string 2 line))
       (setq rest (substring line (match-end 0))))
-    (cond
-     ((string-match "^##\\[command\\]\\(.*\\)" rest)
-      (let ((cmd (match-string 1 rest)))
-        (list :type 'command :time time-str :text (concat "> " cmd))))
-     ((string-match "^##\\[error\\]\\(.*\\)" rest)
-      (let ((err (match-string 1 rest)))
-        (list :type 'error :time time-str :text (concat "error: " err))))
-     ((string-match "^##\\[warning\\]\\(.*\\)" rest)
-      (let ((warn (match-string 1 rest)))
-        (list :type 'warning :time time-str :text (concat "warning: " warn))))
-     ((string-match "^##\\[notice\\]\\(.*\\)" rest)
-      (let ((notic (match-string 1 rest)))
-        (list :type 'notice :time time-str :text (concat "notice: " notic))))
-     ((string-match "^##\\[debug\\]\\(.*\\)" rest)
-      (let ((dbg (match-string 1 rest)))
-        (list :type 'debug :time time-str :text (concat "debug: " dbg))))
-     ((string-match "^##\\[group\\]\\(.*\\)" rest)
-      (let ((title (match-string 1 rest)))
-        (list :type 'group-start :time time-str :text title)))
-     ((string-match "^##\\[endgroup\\]" rest)
-      (list :type 'group-end :time time-str :text nil))
-     (t
-      (list :type 'normal :time time-str :text rest)))))
+    ;; Workflow command markers are emitted with a leading "##" (by the runner
+    ;; itself, e.g. "##[command]") or without it (by actions such as
+    ;; actions/checkout, e.g. "[command]").  Allow up to two leading hashes,
+    ;; match the marker generically and dispatch on its name, treating any
+    ;; unknown marker as normal output.
+    (if (not (string-match "^#\\{0,2\\}\\[\\([a-z]+\\)\\]\\(.*\\)" rest))
+        (list :type 'normal :time time-str :text rest)
+      (let ((marker (match-string 1 rest))
+            (text (match-string 2 rest)))
+        (pcase marker
+          ("command" (list :type 'command :time time-str :text (concat "> " text)))
+          ("error" (list :type 'error :time time-str :text (concat "error: " text)))
+          ("warning" (list :type 'warning :time time-str :text (concat "warning: " text)))
+          ("notice" (list :type 'notice :time time-str :text (concat "notice: " text)))
+          ("debug" (list :type 'debug :time time-str :text (concat "debug: " text)))
+          ("section" (list :type 'section :time time-str :text text))
+          ("group" (list :type 'group-start :time time-str :text text))
+          ("endgroup" (list :type 'group-end :time time-str :text nil))
+          (_ (list :type 'normal :time time-str :text rest)))))))
 
 (defun forge-plugins-github-actions--parse-log-lines (lines)
   "Parse LINES into a structured list of groups and lines."
@@ -504,6 +505,7 @@ Keybindings:
     (when text
       (let ((face (cond
                    ((eq type 'command) 'forge-plugins-github-actions-log-command)
+                   ((eq type 'section) 'forge-plugins-github-actions-log-section)
                    ((eq type 'error) 'forge-plugins-github-actions-failure)
                    ((eq type 'warning) 'forge-plugins-github-actions-warning)
                    ((eq type 'notice) 'forge-plugins-github-actions-warning)
@@ -529,6 +531,17 @@ Keybindings:
                (`(line ,parsed-line)
                 (forge-plugins-github-actions--insert-log-line parsed-line))))))))))
 
+(defun forge-plugins-github-actions--log-insert-message (message)
+  "Replace the current log buffer with MESSAGE inside a root section.
+The log buffer uses `magit-section-mode', whose `post-command-hook'
+requires a root section to exist; inserting bare text would make
+`magit-current-section' return nil and signal a wrong-type error."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (magit-insert-section (logbuf)
+      (insert message))
+    (set-buffer-modified-p nil)))
+
 (defun forge-plugins-github-actions--log-fetch-and-display (&optional force)
   "Fetch and display the logs in the current buffer.
 If FORCE is nil and the logs are cached, use the cached logs."
@@ -540,20 +553,20 @@ If FORCE is nil and the logs are cached, use the cached logs."
         (let ((value (gethash job-id forge-plugins-github-actions--log-cache)))
           (forge-plugins-github-actions--debug "Using cached logs for job %s" job-id)
           (with-current-buffer buf
-            (let ((inhibit-read-only t))
-              (erase-buffer)
-              (if (and value (not (equal value "")))
+            (if (and value (not (equal value "")))
+                (let ((inhibit-read-only t))
+                  (erase-buffer)
                   (magit-insert-section (logbuf)
                     (let ((parsed (forge-plugins-github-actions--parse-log-lines
                                    (split-string value "\r?\n"))))
                       (forge-plugins-github-actions--insert-parsed-log parsed)
                       (ansi-color-apply-on-region (point-min) (point-max))))
-                (insert "No logs found or log is empty.\n"))
-              (set-buffer-modified-p nil))))
+                  (set-buffer-modified-p nil))
+              (forge-plugins-github-actions--log-insert-message
+               "No logs found or log is empty.\n"))))
       (with-current-buffer buf
-        (let ((inhibit-read-only t))
-          (erase-buffer)
-          (insert "Fetching logs for job " job-id "...\n")))
+        (forge-plugins-github-actions--log-insert-message
+         (concat "Fetching logs for job " job-id "...\n")))
       (forge-plugins-github-actions--debug "Fetching logs for job %s" job-id)
       (let ((url (format "/repos/:owner/:repo/actions/jobs/%s/logs" job-id)))
         (forge-plugins-github-actions--rest-raw
@@ -566,30 +579,30 @@ If FORCE is nil and the logs are cached, use the cached logs."
            (puthash job-id value forge-plugins-github-actions--log-cache)
            (when (buffer-live-p buf)
              (with-current-buffer buf
-               (let ((inhibit-read-only t))
-                 (erase-buffer)
-                 (if (and value (not (equal value "")))
+               (if (and value (not (equal value "")))
+                   (let ((inhibit-read-only t))
+                     (erase-buffer)
                      (magit-insert-section (logbuf)
                        (let ((parsed (forge-plugins-github-actions--parse-log-lines
                                       (split-string value "\r?\n"))))
                          (forge-plugins-github-actions--insert-parsed-log parsed)
                          (ansi-color-apply-on-region (point-min) (point-max))))
-                   (insert "No logs found or log is empty.\n"))
-                 (set-buffer-modified-p nil)))))
+                     (set-buffer-modified-p nil))
+                 (forge-plugins-github-actions--log-insert-message
+                  "No logs found or log is empty.\n")))))
          :errorback
          (lambda (err &rest _)
            (forge-plugins-github-actions--debug
             "Failed to fetch logs for job %s: %S" job-id err)
            (when (buffer-live-p buf)
              (with-current-buffer buf
-               (let ((inhibit-read-only t))
-                 (erase-buffer)
-                 (insert "Failed to fetch logs.\n")
-                 (when-let ((msg (or (and (listp err) (cdr (assq 'message err)))
-                                     (and (listp err) (cdr (assq 'error err)))
-                                     (and (stringp err) err))))
-                   (insert "Error: " msg "\n"))
-                 (set-buffer-modified-p nil))))))))))
+               (let ((msg (or (and (listp err) (cdr (assq 'message err)))
+                              (and (listp err) (cdr (assq 'error err)))
+                              (and (stringp err) err))))
+                 (forge-plugins-github-actions--log-insert-message
+                  (if msg
+                      (concat "Failed to fetch logs.\n" "Error: " msg "\n")
+                    "Failed to fetch logs.\n")))))))))))
 
 (defun forge-plugins-github-actions-view-logs ()
   "Fetch and display the logs of the GitHub Action under point."
