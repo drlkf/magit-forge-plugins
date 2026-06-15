@@ -33,6 +33,7 @@
 
 (require 'forge-plugins-topic-format)
 (require 'forge-plugins-github-actions)
+(require 'forge-plugins-pullreq-commits)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
@@ -41,7 +42,9 @@
   (when forge-plugins-topic-format-enable
     (forge-plugins-topic-format-enable))
   (when forge-plugins-github-actions-enable
-    (forge-plugins-github-actions-enable)))
+    (forge-plugins-github-actions-enable))
+  (when forge-plugins-pullreq-commits-enable
+    (forge-plugins-pullreq-commits-enable)))
 
 (provide 'forge-plugins)
 ;;; forge-plugins.el ends here

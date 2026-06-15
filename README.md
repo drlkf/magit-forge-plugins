@@ -11,7 +11,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
 (require 'forge-plugins)
 
 (setq forge-plugins-topic-format-enable t
-      forge-plugins-github-actions-enable t)
+      forge-plugins-github-actions-enable t
+      forge-plugins-pullreq-commits-enable t)
 
 (forge-plugins-enable)
 ```
@@ -23,6 +24,7 @@ With `use-package`:
   :custom
   (forge-plugins-topic-format-enable t)
   (forge-plugins-github-actions-enable t)
+  (forge-plugins-pullreq-commits-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -100,3 +102,13 @@ When viewing the logs inside Emacs, the following keybindings are available:
 - `b` -- Open the action's logs in your browser.
 - `r` -- Refresh/revert the logs just-in-time (bypasses the cache and fetches the latest logs).
 - `q` -- Bury/quit the log buffer.
+
+## Pull Request Commits
+
+In the pull request buffer, `forge` builds the `Commits` section by unioning several refs (the canonical `refs/pullreqs/N` ref, the active local pull request branch, and a local branch matching the head ref) so the listing stays useful when those refs drift out of sync. A side effect is that, after a force-push or rebase, a local pull request branch that still points at the old commits causes those stale commits to reappear in the section.
+
+This plugin restricts the section to `forge`'s canonical range, `<remote>/<base-ref>..refs/pullreqs/N`, so only the commits actually present in the (re-fetched) pull request are shown. It advises `forge--insert-pullreq-commits` to drop its `all` argument.
+
+**Flag:** `forge-plugins-pullreq-commits-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
