@@ -1,10 +1,13 @@
-;;; magit-forge-plugins.el --- Collection of plugins for forge  -*- lexical-binding: t; -*-
+;;; forge-plugins.el --- Collection of plugins for forge  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  drlkf
 
-;; Author: drlkf
-;; Package-Requires: ((forge "0.5.0") (emacs "29.1"))
+;; Author: drlkf <drlkf@drlkf.net>
+;; Maintainer: drlkf <drlkf@drlkf.net>
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "29.1") (forge "0.5.0") (magit "4.0.0") (ghub "4.0.0"))
 ;; Keywords: tools
+;; URL: https://github.com/drlkf/magit-forge-plugins
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -28,17 +31,17 @@
 
 ;;; Code:
 
-(require 'forge-plugin-topic-format)
-(require 'forge-plugin-github-actions)
+(require 'forge-plugins-topic-format)
+(require 'forge-plugins-github-actions)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
   "Enable all plugins according to their feature flag."
   (interactive)
-  (when forge-plugin-topic-format-enable
-    (forge-plugin-topic-format-enable))
-  (when forge-plugin-github-actions-enable
-    (forge-plugin-github-actions-enable)))
+  (when forge-plugins-topic-format-enable
+    (forge-plugins-topic-format-enable))
+  (when forge-plugins-github-actions-enable
+    (forge-plugins-github-actions-enable)))
 
-(provide 'magit-forge-plugins)
-;;; magit-forge-plugins.el ends here
+(provide 'forge-plugins)
+;;; forge-plugins.el ends here

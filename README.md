@@ -8,10 +8,10 @@ The `magit` maintainer is difficult to work with, so I'll be my own dictator.
 To use the plugins, require the package, set the desired feature flags to `t`, and call `forge-plugins-enable`:
 
 ```elisp
-(require 'magit-forge-plugins)
+(require 'forge-plugins)
 
-(setq forge-plugin-topic-format-enable t
-      forge-plugin-github-actions-enable t)
+(setq forge-plugins-topic-format-enable t
+      forge-plugins-github-actions-enable t)
 
 (forge-plugins-enable)
 ```
@@ -19,10 +19,10 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
 With `use-package`:
 
 ```elisp
-(use-package magit-forge-plugins
+(use-package forge-plugins
   :custom
-  (forge-plugin-topic-format-enable t)
-  (forge-plugin-github-actions-enable t)
+  (forge-plugins-topic-format-enable t)
+  (forge-plugins-github-actions-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -33,13 +33,13 @@ With `use-package`:
 
 Customize the display of topic lines in `forge` topic and notification lists.
 
-**Flag:** `forge-plugin-topic-format-enable` (default `nil`)
+**Flag:** `forge-plugins-topic-format-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
 
 ### Customization
 
-- `forge-plugin-topic-line-format` -- Format string for topic lines.
+- `forge-plugins-topic-line-format` -- Format string for topic lines.
 Supported `%`-sequences:
 
 - `%R` -- repository slug, padded to `forge-topic-repository-slug-width`
@@ -49,13 +49,13 @@ Supported `%`-sequences:
 
 Default: `%R%s %t`
 
-- `forge-plugin-topic-slug-symbols` -- Alist mapping topic classes
+- `forge-plugins-topic-slug-symbols` -- Alist mapping topic classes
 (`forge-issue`, `forge-pullreq`, `forge-discussion`) to prefix
 symbols.  When non-nil, the forge's leading character is replaced
 at display time.  Example:
 
 ```elisp
-(setq forge-plugin-topic-slug-symbols
+(setq forge-plugins-topic-slug-symbols
       '((forge-issue    . "#")
         (forge-pullreq  . "!")
         (forge-discussion . "@")))
@@ -65,14 +65,25 @@ at display time.  Example:
 
 Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions section is collapsible with `TAB` (default expanded), and the individual action lines are fully interactible even on their indentation.
 
-**Flag:** `forge-plugin-github-actions-enable` (default `nil`)
+**Flag:** `forge-plugins-github-actions-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
 
 ### Customization
 
-- `forge-plugin-github-actions-debug` -- Whether to enable debug logging.
-If non-nil, debug logs are written to the buffer `*forge-plugin-github-actions-debug*`.
+- `forge-plugins-github-actions-debug` -- Whether to enable debug logging.
+If non-nil, debug logs are written to the buffer `*forge-plugins-github-actions-debug*`.
+
+- `forge-plugins-github-actions-max-concurrent-requests` -- Maximum number
+of check-run fetches to run concurrently (default `6`). Fetches are queued
+and dispatched as in-flight requests complete, so status for many pull
+requests is fetched in parallel without blocking Emacs or hammering the
+GitHub API.
+
+- `forge-plugins-github-actions-refresh-delay` -- Delay in seconds (default
+`0.3`) before refreshing buffers after a fetch completes. Completions within
+this window are coalesced into a single refresh, avoiding the refresh storm
+that previously froze the Emacs daemon.
 
 ### Keybindings
 

@@ -29,10 +29,11 @@ include the `tested-on-forge` value at the top of the section too.
 
 # Conventions
 
-The global package prefix is `forge-plugin`:
+The package is named `forge-plugins` and the global symbol prefix is
+`forge-plugins` (it must match the package name for MELPA's `package-lint`):
 
-- a public variable `frobnicate-method` should be `forge-plugin-frobnicate-method`
-- a private variable `frobnicate-parameters` should be `forge-plugin--frobnicate-parameters`
+- a public variable `frobnicate-method` should be `forge-plugins-frobnicate-method`
+- a private variable `frobnicate-parameters` should be `forge-plugins--frobnicate-parameters`
 
 If modifications to upstream `forge` behavior must happen, make sure to use
 `advice-add` instead of overwriting the original symbols with custom code.

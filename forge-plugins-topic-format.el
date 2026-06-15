@@ -1,9 +1,8 @@
-;;; forge-plugin-topic-format.el --- Topic line formatting customization  -*- lexical-binding: t; -*-
+;;; forge-plugins-topic-format.el --- Topic line formatting customization  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  drlkf
 
-;; Author: drlkf
-;; Package-Requires: ((forge "0.5.0") (emacs "29.1"))
+;; Author: drlkf <drlkf@drlkf.net>
 ;; Keywords: tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -22,17 +21,17 @@
 ;;; Commentary:
 
 ;; Customize the format of topic lines in `forge' topic and
-;; notification lists.  Provides `forge-plugin-topic-line-format' and
-;; `forge-plugin-topic-slug-symbols' to control display.
+;; notification lists.  Provides `forge-plugins-topic-line-format' and
+;; `forge-plugins-topic-slug-symbols' to control display.
 
 ;;; Code:
 
 (require 'forge nil t)
 
-(defconst forge-plugin-topic-format-tested-on-forge "0.6.6"
+(defconst forge-plugins-topic-format-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
 
-(defcustom forge-plugin-topic-line-format "%R%s %t"
+(defcustom forge-plugins-topic-line-format "%R%s %t"
   "Format for topic lines in topic and notification lists.
 
 The following %-sequences are supported:
@@ -46,27 +45,27 @@ empty string.
 requested by the caller.
 `%a' The login of the topic's author.
 `%t' The title of the topic."
-  :package-version '(forge-plugin-topic-format . "0.1.0")
+  :package-version '(forge-plugins-topic-format . "0.1.0")
   :group 'forge
   :type 'string)
 
-(defcustom forge-plugin-topic-slug-symbols
+(defcustom forge-plugins-topic-slug-symbols
   '((forge-issue . nil)
     (forge-pullreq . nil)
     (forge-discussion . nil))
   "Symbols used to prefix topic slugs, by topic type.
 
 Each entry maps a topic class to the symbol displayed in front of
-the topic's number. When the symbol is nil, the slug provided by
+the topic's number.  When the symbol is nil, the slug provided by
 the forge is used as-is; otherwise the forge's leading symbol is
 replaced with the configured one at display time.
 
 Note that forges use their own conventions: e.g., GitLab uses
 \"!\" for merge requests and \"#\" for issues, while GitHub uses
-\"#\" for everything. By default these conventions are preserved.
+\"#\" for everything.  By default these conventions are preserved.
 For example, setting `forge-discussion' to \"@\" displays GitHub
 discussions with an at-sign prefix."
-  :package-version '(forge-plugin-topic-format . "0.1.0")
+  :package-version '(forge-plugins-topic-format . "0.1.0")
   :group 'forge
   :type '(alist :key-type (choice (const forge-issue)
                                   (const forge-pullreq)
@@ -74,15 +73,15 @@ discussions with an at-sign prefix."
                 :value-type (choice (const :tag "Use forge's slug" nil)
                                     string)))
 
-(defun forge-plugin--apply-topic-slug-symbol (topic slug)
+(defun forge-plugins--apply-topic-slug-symbol (topic slug)
   "Return SLUG with its leading symbol replaced.
 The replacement is chosen based on the type of TOPIC per
-`forge-plugin-topic-slug-symbols'. If no symbol is configured
+`forge-plugins-topic-slug-symbols'.  If no symbol is configured
 for that type, SLUG is returned unchanged."
   (let* ((sym (cdr (assq (cond ((forge-discussion-p topic) 'forge-discussion)
                                ((forge-pullreq-p topic) 'forge-pullreq)
                                ((forge-issue-p topic) 'forge-issue))
-                         forge-plugin-topic-slug-symbols))))
+                         forge-plugins-topic-slug-symbols))))
     (if (not sym)
         slug
       (let* ((rest (string-remove-prefix
@@ -91,15 +90,22 @@ for that type, SLUG is returned unchanged."
              (props (text-properties-at 0 slug)))
         (apply #'propertize (concat sym rest) props)))))
 
-(defun forge-plugin--format-topic-slug (orig-fun topic)
-  (if forge-plugin-topic-format-enable
-      (forge-plugin--apply-topic-slug-symbol topic (funcall orig-fun topic))
+(defun forge-plugins--format-topic-slug (orig-fun topic)
+  "Around advice for `forge--format-topic-slug'.
+ORIG-FUN is the advised function and TOPIC the topic to format.
+When the plugin is disabled, ORIG-FUN is called unchanged."
+  (if forge-plugins-topic-format-enable
+      (forge-plugins--apply-topic-slug-symbol topic (funcall orig-fun topic))
     (funcall orig-fun topic)))
 
-(defun forge-plugin--format-topic-line (orig-fun topic &optional width)
-  (if forge-plugin-topic-format-enable
+(defun forge-plugins--format-topic-line (orig-fun topic &optional width)
+  "Around advice for `forge--format-topic-line'.
+Format TOPIC according to `forge-plugins-topic-line-format', padding
+the slug to WIDTH.  ORIG-FUN is called unchanged when the plugin is
+disabled."
+  (if forge-plugins-topic-format-enable
       (format-spec
-       forge-plugin-topic-line-format
+       forge-plugins-topic-line-format
        `((?R . ,(or (and (or (and (derived-mode-p 'forge-notifications-mode)
                                   (eq forge-notifications-display-style 'flat))
                              (and (derived-mode-p 'forge-topics-mode)
@@ -112,45 +118,46 @@ for that type, SLUG is returned unchanged."
                                  " "))
                     ""))
          (?s . ,(string-pad (forge--format-topic-slug topic) (or width 5)))
-         (?a . ,(forge-plugin--format-topic-author topic))
+         (?a . ,(forge-plugins--format-topic-author topic))
          (?t . ,(forge--format-topic-title topic))))
     (funcall orig-fun topic width)))
 
-(defun forge-plugin--format-topic-author (topic)
+(defun forge-plugins--format-topic-author (topic)
+  "Return TOPIC's author login propertized with `forge-post-author'."
   (magit--propertize-face (or (oref topic author) "(ghost)")
                           'forge-post-author))
 
 ;;;###autoload
-(defun forge-plugin-topic-format-enable ()
+(defun forge-plugins-topic-format-enable ()
   "Enable topic line formatting customization."
   (interactive)
-  (setq forge-plugin-topic-format-enable t)
-  (advice-add 'forge--format-topic-slug :around #'forge-plugin--format-topic-slug)
-  (advice-add 'forge--format-topic-line :around #'forge-plugin--format-topic-line))
+  (setq forge-plugins-topic-format-enable t)
+  (advice-add 'forge--format-topic-slug :around #'forge-plugins--format-topic-slug)
+  (advice-add 'forge--format-topic-line :around #'forge-plugins--format-topic-line))
 
 ;;;###autoload
-(defun forge-plugin-topic-format-disable ()
+(defun forge-plugins-topic-format-disable ()
   "Disable topic line formatting customization."
   (interactive)
-  (setq forge-plugin-topic-format-enable nil)
-  (advice-remove 'forge--format-topic-slug #'forge-plugin--format-topic-slug)
-  (advice-remove 'forge--format-topic-line #'forge-plugin--format-topic-line))
+  (setq forge-plugins-topic-format-enable nil)
+  (advice-remove 'forge--format-topic-slug #'forge-plugins--format-topic-slug)
+  (advice-remove 'forge--format-topic-line #'forge-plugins--format-topic-line))
 
 ;;;###autoload
-(defcustom forge-plugin-topic-format-enable nil
+(defcustom forge-plugins-topic-format-enable nil
   "Whether to enable topic line formatting customization."
-  :package-version '(forge-plugin-topic-format . "0.1.0")
+  :package-version '(forge-plugins-topic-format . "0.1.0")
   :group 'forge
   :type 'boolean
   :set (lambda (sym val)
          (set-default sym val)
-         (when (featurep 'forge-plugin-topic-format)
+         (when (featurep 'forge-plugins-topic-format)
            (if val
-               (forge-plugin-topic-format-enable)
-             (forge-plugin-topic-format-disable)))))
+               (forge-plugins-topic-format-enable)
+             (forge-plugins-topic-format-disable)))))
 
-(when forge-plugin-topic-format-enable
-  (forge-plugin-topic-format-enable))
+(when forge-plugins-topic-format-enable
+  (forge-plugins-topic-format-enable))
 
-(provide 'forge-plugin-topic-format)
-;;; forge-plugin-topic-format.el ends here
+(provide 'forge-plugins-topic-format)
+;;; forge-plugins-topic-format.el ends here
