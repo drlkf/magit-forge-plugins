@@ -116,15 +116,17 @@ Keys are job IDs (strings).
 Values are log strings.")
 
 (defvar-keymap forge-plugins-github-action-section-map
-  :doc "Keymap for GitHub Action sections in a pull request topic view."
+  :doc "Keymap for GitHub Action lines in a pull request topic view."
   :parent forge-common-map
   "<remap> <magit-visit-thing>"  #'forge-plugins-github-actions-view-logs
   "b"                            #'forge-plugins-github-actions-visit-run
   "R"                            #'forge-plugins-github-actions-rerun)
 
-(defclass forge-plugins-github-action-section (magit-section)
-  ((keymap :initform 'forge-plugins-github-action-section-map))
-  "Magit section class for a single GitHub Action check run.")
+(defun forge-plugins-github-actions--run-at-point ()
+  "Return the GitHub Action check run on the line at point.
+Signal a `user-error' when point is not on an action line."
+  (or (get-text-property (point) 'forge-plugins-github-actions-run)
+      (user-error "No action under point")))
 
 (defun forge-plugins-github-actions--refresh-buffers ()
   "Refresh all visible or active Magit and Forge buffers."
@@ -336,14 +338,17 @@ TOPIC defaults to `forge-buffer-topic' when nil."
                                     ((member conclusion
                                              '("failure" "timed_out" "action_required"))
                                      'forge-plugins-github-actions-failure)
-                                    (t 'forge-plugins-github-actions-warning))))
-                        (magit-insert-section (forge-plugins-github-action-section run t)
-                          (insert "  ")
-                          (insert (propertize (format "%-10s" status-str) 'face face))
-                          (insert " ")
-                          (insert (propertize name 'face 'magit-section-highlight))
-                          (oset magit-insert-section--current value run)
-                          (insert "\n"))))
+                                    (t 'forge-plugins-github-actions-warning)))
+                             (beg (point)))
+                        (insert "  ")
+                        (insert (propertize (format "%-10s" status-str) 'face face))
+                        (insert " ")
+                        (insert (propertize name 'face 'magit-section-highlight))
+                        (insert "\n")
+                        (add-text-properties
+                         beg (point)
+                         (list 'forge-plugins-github-actions-run run
+                               'keymap forge-plugins-github-action-section-map))))
                   (insert (magit--propertize-face "none" 'magit-dimmed) "\n")))))
              ((and cached (plist-get cached :fetching))
               (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n"))
@@ -571,68 +576,65 @@ If FORCE is nil and the logs are cached, use the cached logs."
 (defun forge-plugins-github-actions-view-logs ()
   "Fetch and display the logs of the GitHub Action under point."
   (interactive)
-  (if-let ((run (oref (magit-current-section) value)))
-      (let* ((topic forge-buffer-topic)
-             (job-id (forge-plugins-github-actions--extract-job-id run))
-             (name (alist-get 'name run))
-             (buf-name (format "*forge-github-action-log: %s (%s)*" name job-id))
-             (buf (get-buffer-create buf-name)))
-        (with-current-buffer buf
-          (forge-plugins-github-actions-log-mode)
-          (setq forge-plugins-github-actions--log-topic topic)
-          (setq forge-plugins-github-actions--log-run run)
-          (setq forge-plugins-github-actions--log-job-id job-id))
-        (pop-to-buffer buf)
-        (with-current-buffer buf
-          (forge-plugins-github-actions--log-fetch-and-display)))
-    (user-error "No action under point")))
+  (let* ((run (forge-plugins-github-actions--run-at-point))
+         (topic forge-buffer-topic)
+         (job-id (forge-plugins-github-actions--extract-job-id run))
+         (name (alist-get 'name run))
+         (buf-name (format "*forge-github-action-log: %s (%s)*" name job-id))
+         (buf (get-buffer-create buf-name)))
+    (with-current-buffer buf
+      (forge-plugins-github-actions-log-mode)
+      (setq forge-plugins-github-actions--log-topic topic)
+      (setq forge-plugins-github-actions--log-run run)
+      (setq forge-plugins-github-actions--log-job-id job-id))
+    (pop-to-buffer buf)
+    (with-current-buffer buf
+      (forge-plugins-github-actions--log-fetch-and-display))))
 
 (defun forge-plugins-github-actions-visit-run ()
   "Open the HTML URL of the GitHub Action under point."
   (interactive)
-  (if-let ((run (oref (magit-current-section) value)))
-      (let ((url (alist-get 'html_url run)))
-        (if url
-            (browse-url url)
-          (user-error "No URL found for this action")))
-    (user-error "No action under point")))
+  (let* ((run (forge-plugins-github-actions--run-at-point))
+         (url (alist-get 'html_url run)))
+    (if url
+        (browse-url url)
+      (user-error "No URL found for this action"))))
 
 (defun forge-plugins-github-actions-rerun ()
   "Re-run the GitHub Action under point."
   (interactive)
-  (if-let ((run (oref (magit-current-section) value)))
-      (let* ((topic forge-buffer-topic)
-             (repo (forge-get-repository topic))
-             (owner (oref repo owner))
-             (name (oref repo name))
-             (run-id (alist-get 'id run))
-             (run-name (alist-get 'name run))
-             (url (format "/repos/%s/%s/check-runs/%s/rerequest" owner name run-id)))
-        (message "Requesting re-run of %s..." run-name)
+  (let* ((run (forge-plugins-github-actions--run-at-point))
+         (topic forge-buffer-topic)
+         (repo (forge-get-repository topic))
+         (owner (oref repo owner))
+         (name (oref repo name))
+         (run-id (alist-get 'id run))
+         (run-name (alist-get 'name run))
+         (url (format "/repos/%s/%s/check-runs/%s/rerequest" owner name run-id)))
+    (message "Requesting re-run of %s..." run-name)
+    (forge-plugins-github-actions--debug
+     "Requesting re-run of check run %s (ID: %s)" run-name run-id)
+    (forge-rest topic "POST" url nil
+      :callback
+      (lambda (&rest _)
+        (message "Re-run of %s requested successfully" run-name)
         (forge-plugins-github-actions--debug
-         "Requesting re-run of check run %s (ID: %s)" run-name run-id)
-        (forge-rest topic "POST" url nil
-          :callback
-          (lambda (&rest _)
-            (message "Re-run of %s requested successfully" run-name)
-            (forge-plugins-github-actions--debug
-             "Successfully requested re-run of check run %s" run-name)
-            (let* ((id (oref topic id))
-                   (cached (gethash id forge-plugins-github-actions--cache)))
-              (when cached
-                (puthash id
-                         (plist-put cached :fetching t)
-                         forge-plugins-github-actions--cache)
-                (forge-plugins-github-actions--schedule-refresh)))
-            (run-with-timer
-             2 nil #'forge-plugins-github-actions--enqueue topic))
-          :errorback
-          (lambda (err &rest _)
-            (let ((msg (or (alist-get 'message err) "Unknown error")))
-              (message "Failed to re-run %s: %s" run-name msg)
-              (forge-plugins-github-actions--debug
-               "Failed to request re-run of check run %s: %S" run-name err)))))
-    (user-error "No action under point")))
+         "Successfully requested re-run of check run %s" run-name)
+        (let* ((id (oref topic id))
+               (cached (gethash id forge-plugins-github-actions--cache)))
+          (when cached
+            (puthash id
+                     (plist-put cached :fetching t)
+                     forge-plugins-github-actions--cache)
+            (forge-plugins-github-actions--schedule-refresh)))
+        (run-with-timer
+         2 nil #'forge-plugins-github-actions--enqueue topic))
+      :errorback
+      (lambda (err &rest _)
+        (let ((msg (or (alist-get 'message err) "Unknown error")))
+          (message "Failed to re-run %s: %s" run-name msg)
+          (forge-plugins-github-actions--debug
+           "Failed to request re-run of check run %s: %S" run-name err))))))
 
 ;;;###autoload
 (defun forge-plugins-github-actions-enable ()

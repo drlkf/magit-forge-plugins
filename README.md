@@ -63,7 +63,7 @@ at display time.  Example:
 
 ## GitHub Actions
 
-Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions section is collapsible with `TAB` (default expanded), and the individual action lines are fully interactible even on their indentation.
+Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions are listed under the collapsible `Actions:` header (with `TAB`, default expanded), and each individual action line is fully interactible across its whole width including the indentation.
 
 The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the number of failed ones. When some check runs were skipped, a `[z]` suffix is appended showing the total number of runs including skipped ones, e.g. `(3/1) [6]`.
 
@@ -89,7 +89,7 @@ that previously froze the Emacs daemon.
 
 ### Keybindings
 
-When inside a pull request topic view, the following keybindings are available on a GitHub Action section:
+When inside a pull request topic view, the following keybindings are available on a GitHub Action line:
 
 - `RET` -- Fetch and view the action's job logs directly inside Emacs (logs are cached after the first fetch).
 - `b` -- Open the action's logs in your browser.
