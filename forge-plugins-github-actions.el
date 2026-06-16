@@ -354,7 +354,7 @@ GitHub pull request."
                                   (t 'forge-plugins-github-actions-warning)))
                            (beg (point)))
                       (insert "  ")
-                      (insert (propertize (format "%-10s" status-str) 'face face))
+                      (insert (propertize (format "%-15s" status-str) 'face face))
                       (insert " ")
                       (insert (propertize name 'face 'magit-section-highlight))
                       (insert "\n")
