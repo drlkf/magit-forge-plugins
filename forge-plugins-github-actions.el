@@ -122,6 +122,14 @@ Values are plists:
 Keys are job IDs (strings).
 Values are log strings.")
 
+(defvar forge-plugins-github-actions--steps-cache (make-hash-table :test 'equal)
+  "Cache of GitHub Actions job step metadata.
+Keys are job IDs (strings).
+Values are the `steps' list returned by the jobs API (a list of
+alists with at least `name', `number', `status', `conclusion',
+`started_at' and `completed_at'), or the symbol `none' when the
+job has no step metadata.")
+
 (defvar-keymap forge-plugins-github-action-section-map
   :doc "Keymap for GitHub Action lines in a pull request topic view."
   :parent forge-common-map
@@ -468,38 +476,98 @@ Keybindings:
           ("endgroup" (list :type 'group-end :time time-str :text nil))
           (_ (list :type 'normal :time time-str :text rest)))))))
 
-(defun forge-plugins-github-actions--parse-log-lines (lines)
-  "Parse LINES into a structured list of groups and lines."
-  (let ((result nil)
-        (current-group-title nil)
-        (current-group-items nil))
+(defun forge-plugins-github-actions--parse-log-groups (lines)
+  "Parse LINES into a nested structure of groups and lines.
+LINES is a list of raw log line strings.  Each `##[group]' opens a
+collapsible section that nests under any currently open group and is
+closed by its matching `##[endgroup]'; lines following an
+`##[endgroup]' are attributed to the enclosing group (or the top
+level when none remains open).  Returns a list whose items are
+either `(line PARSED)' or `(group TITLE ITEMS)', where ITEMS may
+itself contain nested `(group ...)' entries."
+  (let ((root nil)
+        (stack nil))
+    (cl-labels
+        ((append-item (item)
+           (if stack
+               (let ((frame (car stack)))
+                 (setcdr frame (cons item (cdr frame))))
+             (push item root)))
+         (close-top ()
+           (let* ((frame (pop stack))
+                  (node (list 'group (car frame) (nreverse (cdr frame)))))
+             (append-item node))))
+      (dolist (line lines)
+        (let* ((parsed (forge-plugins-github-actions--parse-log-line line))
+               (type (plist-get parsed :type))
+               (text (plist-get parsed :text)))
+          (cond
+           ((eq type 'group-start)
+            (push (cons text nil) stack))
+           ((eq type 'group-end)
+            (when stack (close-top)))
+           (t (append-item (list 'line parsed))))))
+      (while stack (close-top))
+      (nreverse root))))
+
+(defun forge-plugins-github-actions--log-line-timestamp (line)
+  "Return the `YYYY-MM-DDTHH:MM:SS' UTC prefix of LINE, or nil.
+GitHub prefixes each raw log line with an ISO-8601 UTC timestamp.
+The returned prefix is directly comparable lexicographically, which
+matches chronological order, and is used to partition lines into the
+job's steps by comparing against each step's `started_at'."
+  (when (string-match "^\\([0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}T[0-9]\\{2\\}:[0-9]\\{2\\}:[0-9]\\{2\\}\\)"
+                      line)
+    (match-string 1 line)))
+
+(defun forge-plugins-github-actions--partition-lines-by-steps (lines steps)
+  "Partition raw LINES into the job's STEPS by timestamp.
+STEPS is the `steps' list from the jobs API.  Returns a cons of
+\(PREAMBLE . TABLE) where PREAMBLE is the list of lines emitted before
+the first step started, and TABLE is a hash mapping a step `number'
+to its list of lines.  Lines without their own timestamp inherit the
+bucket of the preceding line.  Steps that never started (`started_at'
+nil, e.g. skipped steps) are ignored for partitioning."
+  (let* ((started (sort (cl-remove-if-not (lambda (s) (alist-get 'started_at s)) steps)
+                        (lambda (a b)
+                          (string-lessp (alist-get 'started_at a)
+                                        (alist-get 'started_at b)))))
+         (starts (mapcar (lambda (s) (substring (alist-get 'started_at s) 0 19)) started))
+         (numbers (mapcar (lambda (s) (alist-get 'number s)) started))
+         (nsteps (length started))
+         (table (make-hash-table :test 'eq))
+         (preamble nil)
+         (idx -1))
     (dolist (line lines)
-      (let* ((parsed (forge-plugins-github-actions--parse-log-line line))
-             (type (plist-get parsed :type))
-             (text (plist-get parsed :text)))
-        (cond
-         ((eq type 'group-start)
-          (when current-group-title
-            (push (list 'group current-group-title (nreverse current-group-items)) result)
-            (setq current-group-items nil))
-          (setq current-group-title text))
-         ((eq type 'group-end)
-          (if current-group-title
-              (progn
-                (push (list 'group current-group-title (nreverse current-group-items)) result)
-                (setq current-group-title nil)
-                (setq current-group-items nil))
-            (push (list 'line parsed) result)))
-         (t
-          (if current-group-title
-              (push (list 'line parsed) current-group-items)
-            (push (list 'line parsed) result))))))
-    (when current-group-title
-      (push (list 'group current-group-title (nreverse current-group-items)) result))
-    (nreverse result)))
+      (let ((ts (forge-plugins-github-actions--log-line-timestamp line)))
+        (when ts
+          (while (and (< (1+ idx) nsteps)
+                      (not (string-lessp ts (nth (1+ idx) starts))))
+            (cl-incf idx)))
+        (if (< idx 0)
+            (push line preamble)
+          (let ((num (nth idx numbers)))
+            (puthash num (cons line (gethash num table)) table)))))
+    (maphash (lambda (k v) (puthash k (nreverse v) table)) table)
+    (cons (nreverse preamble) table)))
+
+(defun forge-plugins-github-actions--step-face (step)
+  "Return the face to use for the heading of STEP."
+  (let ((conclusion (alist-get 'conclusion step))
+        (status (alist-get 'status step)))
+    (cond
+     ((equal conclusion "success") 'forge-plugins-github-actions-success)
+     ((member conclusion '("failure" "timed_out" "action_required" "cancelled"))
+      'forge-plugins-github-actions-failure)
+     ((equal conclusion "skipped") 'magit-dimmed)
+     ((equal status "completed") 'forge-plugins-github-actions-success)
+     (t 'forge-plugins-github-actions-warning))))
 
 (defun forge-plugins-github-actions--insert-log-line (parsed-line)
-  "Insert a single PARSED-LINE with proper faces and formatting."
+  "Insert a single PARSED-LINE with proper faces and formatting.
+ANSI color escapes in the line's text are resolved here, per line,
+so that coloring is applied even for lines materialized lazily when a
+collapsed step or group section is later expanded."
   (let ((type (plist-get parsed-line :type))
         (time-str (plist-get parsed-line :time))
         (text (plist-get parsed-line :text)))
@@ -515,26 +583,73 @@ Keybindings:
                    ((eq type 'warning) 'forge-plugins-github-actions-warning)
                    ((eq type 'notice) 'forge-plugins-github-actions-warning)
                    ((eq type 'debug) 'magit-dimmed)
-                   (t nil))))
+                   (t nil)))
+            (beg (point)))
         (if face
             (insert (magit--propertize-face text face))
-          (insert text))))
+          (insert text))
+        (ansi-color-apply-on-region beg (point))))
     (insert "\n")))
 
 (defun forge-plugins-github-actions--insert-parsed-log (parsed)
-  "Insert PARSED log structure into the current buffer."
+  "Insert PARSED log structure into the current buffer.
+PARSED is a list of `(line ...)' and `(group TITLE ITEMS)' items as
+returned by `forge-plugins-github-actions--parse-log-groups'.  Groups
+are rendered as collapsible sections and may nest arbitrarily."
   (dolist (item parsed)
     (pcase item
       (`(line ,parsed-line)
        (forge-plugins-github-actions--insert-log-line parsed-line))
       (`(group ,title ,items)
-       (magit-insert-section (github-action-log-step title t)
+       (magit-insert-section (github-action-log-group title t)
          (magit-insert-heading title)
          (magit-insert-section-body
-           (dolist (subitem items)
-             (pcase subitem
-               (`(line ,parsed-line)
-                (forge-plugins-github-actions--insert-log-line parsed-line))))))))))
+           (forge-plugins-github-actions--insert-parsed-log items)))))))
+
+(defun forge-plugins-github-actions--insert-step-section (step lines)
+  "Insert a collapsible section for STEP containing LINES.
+STEP is a step alist from the jobs API and LINES is the list of raw
+log line strings belonging to it.  Successful steps are collapsed by
+default while failed steps are expanded, mirroring the web UI."
+  (let* ((name (alist-get 'name step))
+         (conclusion (alist-get 'conclusion step))
+         (failed (member conclusion
+                         '("failure" "timed_out" "action_required" "cancelled")))
+         (heading (magit--propertize-face
+                   (or name "step")
+                   (forge-plugins-github-actions--step-face step))))
+    (magit-insert-section (github-action-log-step name (not failed))
+      (magit-insert-heading heading)
+      (magit-insert-section-body
+        (forge-plugins-github-actions--insert-parsed-log
+         (forge-plugins-github-actions--parse-log-groups lines))))))
+
+(defun forge-plugins-github-actions--insert-log (value steps)
+  "Insert the decoded log VALUE into the current buffer.
+When STEPS (the job's step metadata) is available, the log is
+partitioned by timestamp into one collapsible section per step,
+named after the step and ordered as reported by the API, with nested
+`##[group]' blocks rendered as nested sections.  Otherwise the whole
+log is rendered with nested groups only.  ANSI colors are applied
+per line by `forge-plugins-github-actions--insert-log-line', so that
+lazily-materialized collapsed sections are colored on expansion."
+  (magit-insert-section (logbuf)
+    (let ((lines (split-string value "\r?\n")))
+      (if (and steps (listp steps))
+          (pcase-let* ((`(,preamble . ,table)
+                        (forge-plugins-github-actions--partition-lines-by-steps
+                         lines steps)))
+            (when preamble
+              (forge-plugins-github-actions--insert-parsed-log
+               (forge-plugins-github-actions--parse-log-groups preamble)))
+            (dolist (step (cl-sort (copy-sequence steps) #'<
+                                   :key (lambda (s) (or (alist-get 'number s) 0))))
+              (let ((step-lines (gethash (alist-get 'number step) table)))
+                (when (or step-lines (alist-get 'started_at step))
+                  (forge-plugins-github-actions--insert-step-section
+                   step (or step-lines nil))))))
+        (forge-plugins-github-actions--insert-parsed-log
+         (forge-plugins-github-actions--parse-log-groups lines))))))
 
 (defun forge-plugins-github-actions--log-insert-message (message)
   "Replace the current log buffer with MESSAGE inside a root section.
@@ -547,67 +662,99 @@ requires a root section to exist; inserting bare text would make
       (insert message))
     (set-buffer-modified-p nil)))
 
+(defun forge-plugins-github-actions--render-log (buf value steps)
+  "Render the decoded log VALUE with STEPS metadata into BUF.
+STEPS may be nil (render with nested groups only) or `none' (treated
+as nil).  An empty VALUE shows a placeholder message."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (if (and value (not (equal value "")))
+          (let ((inhibit-read-only t)
+                (steps (and (listp steps) steps)))
+            (erase-buffer)
+            (forge-plugins-github-actions--insert-log value steps)
+            (set-buffer-modified-p nil)
+            (goto-char (point-min)))
+        (forge-plugins-github-actions--log-insert-message
+         "No logs found or log is empty.\n")))))
+
+(defun forge-plugins-github-actions--log-fetch-logs (topic job-id buf)
+  "Fetch the logs for JOB-ID of TOPIC and render them into BUF.
+Step metadata is read from the steps cache, having been fetched
+beforehand by `forge-plugins-github-actions--log-fetch-and-display'."
+  (forge-plugins-github-actions--debug "Fetching logs for job %s" job-id)
+  (let ((url (format "/repos/:owner/:repo/actions/jobs/%s/logs" job-id)))
+    (forge-plugins-github-actions--rest-raw
+     topic "GET" url nil
+     :reader #'ghub--decode-payload
+     :callback
+     (lambda (value &rest _)
+       (forge-plugins-github-actions--debug
+        "Successfully fetched logs for job %s (length: %d)" job-id (length value))
+       (puthash job-id value forge-plugins-github-actions--log-cache)
+       (let ((steps (gethash job-id forge-plugins-github-actions--steps-cache)))
+         (forge-plugins-github-actions--render-log buf value steps)))
+     :errorback
+     (lambda (err &rest _)
+       (forge-plugins-github-actions--debug
+        "Failed to fetch logs for job %s: %S" job-id err)
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (let ((msg (or (and (listp err) (cdr (assq 'message err)))
+                          (and (listp err) (cdr (assq 'error err)))
+                          (and (stringp err) err))))
+             (forge-plugins-github-actions--log-insert-message
+              (if msg
+                  (concat "Failed to fetch logs.\n" "Error: " msg "\n")
+                "Failed to fetch logs.\n")))))))))
+
+(defun forge-plugins-github-actions--log-fetch-steps (topic job-id buf then)
+  "Fetch step metadata for JOB-ID of TOPIC, cache it, then call THEN.
+THEN is called with no arguments once the metadata (or a `none'
+marker on failure) has been cached.  BUF is only used to guard
+against rendering into a dead buffer."
+  (forge-plugins-github-actions--debug "Fetching step metadata for job %s" job-id)
+  (let ((url (format "/repos/:owner/:repo/actions/jobs/%s" job-id)))
+    (forge-rest topic "GET" url nil
+      :callback
+      (lambda (value &rest _)
+        (let ((steps (alist-get 'steps value)))
+          (forge-plugins-github-actions--debug
+           "Fetched %d steps for job %s" (length steps) job-id)
+          (puthash job-id (or steps 'none)
+                   forge-plugins-github-actions--steps-cache)
+          (when (buffer-live-p buf) (funcall then))))
+      :errorback
+      (lambda (err &rest _)
+        (forge-plugins-github-actions--debug
+         "Failed to fetch step metadata for job %s: %S" job-id err)
+        (puthash job-id 'none forge-plugins-github-actions--steps-cache)
+        (when (buffer-live-p buf) (funcall then))))))
+
 (defun forge-plugins-github-actions--log-fetch-and-display (&optional force)
   "Fetch and display the logs in the current buffer.
-If FORCE is nil and the logs are cached, use the cached logs."
+If FORCE is nil and the logs are cached, use the cached logs.  The
+job's step metadata is fetched first so the log can be partitioned
+into one collapsible section per step, matching GitHub's web UI."
   (let ((topic forge-plugins-github-actions--log-topic)
         (job-id forge-plugins-github-actions--log-job-id)
         (buf (current-buffer)))
     (if (and (not force)
              (gethash job-id forge-plugins-github-actions--log-cache))
-        (let ((value (gethash job-id forge-plugins-github-actions--log-cache)))
+        (let ((value (gethash job-id forge-plugins-github-actions--log-cache))
+              (steps (gethash job-id forge-plugins-github-actions--steps-cache)))
           (forge-plugins-github-actions--debug "Using cached logs for job %s" job-id)
-          (with-current-buffer buf
-            (if (and value (not (equal value "")))
-                (let ((inhibit-read-only t))
-                  (erase-buffer)
-                  (magit-insert-section (logbuf)
-                    (let ((parsed (forge-plugins-github-actions--parse-log-lines
-                                   (split-string value "\r?\n"))))
-                      (forge-plugins-github-actions--insert-parsed-log parsed)
-                      (ansi-color-apply-on-region (point-min) (point-max))))
-                  (set-buffer-modified-p nil))
-              (forge-plugins-github-actions--log-insert-message
-               "No logs found or log is empty.\n"))))
+          (forge-plugins-github-actions--render-log buf value steps))
       (with-current-buffer buf
         (forge-plugins-github-actions--log-insert-message
          (concat "Fetching logs for job " job-id "...\n")))
-      (forge-plugins-github-actions--debug "Fetching logs for job %s" job-id)
-      (let ((url (format "/repos/:owner/:repo/actions/jobs/%s/logs" job-id)))
-        (forge-plugins-github-actions--rest-raw
-         topic "GET" url nil
-         :reader #'ghub--decode-payload
-         :callback
-         (lambda (value &rest _)
-           (forge-plugins-github-actions--debug
-            "Successfully fetched logs for job %s (length: %d)" job-id (length value))
-           (puthash job-id value forge-plugins-github-actions--log-cache)
-           (when (buffer-live-p buf)
-             (with-current-buffer buf
-               (if (and value (not (equal value "")))
-                   (let ((inhibit-read-only t))
-                     (erase-buffer)
-                     (magit-insert-section (logbuf)
-                       (let ((parsed (forge-plugins-github-actions--parse-log-lines
-                                      (split-string value "\r?\n"))))
-                         (forge-plugins-github-actions--insert-parsed-log parsed)
-                         (ansi-color-apply-on-region (point-min) (point-max))))
-                     (set-buffer-modified-p nil))
-                 (forge-plugins-github-actions--log-insert-message
-                  "No logs found or log is empty.\n")))))
-         :errorback
-         (lambda (err &rest _)
-           (forge-plugins-github-actions--debug
-            "Failed to fetch logs for job %s: %S" job-id err)
-           (when (buffer-live-p buf)
-             (with-current-buffer buf
-               (let ((msg (or (and (listp err) (cdr (assq 'message err)))
-                              (and (listp err) (cdr (assq 'error err)))
-                              (and (stringp err) err))))
-                 (forge-plugins-github-actions--log-insert-message
-                  (if msg
-                      (concat "Failed to fetch logs.\n" "Error: " msg "\n")
-                    "Failed to fetch logs.\n")))))))))))
+      (if (and (not force)
+               (gethash job-id forge-plugins-github-actions--steps-cache))
+          (forge-plugins-github-actions--log-fetch-logs topic job-id buf)
+        (forge-plugins-github-actions--log-fetch-steps
+         topic job-id buf
+         (lambda ()
+           (forge-plugins-github-actions--log-fetch-logs topic job-id buf)))))))
 
 (defun forge-plugins-github-actions-view-logs ()
   "Fetch and display the logs of the GitHub Action under point."
