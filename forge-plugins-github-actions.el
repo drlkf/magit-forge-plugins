@@ -281,7 +281,7 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
                             ((= success relevant) 'forge-plugins-github-actions-success)
                             (t 'forge-plugins-github-actions-warning)))
                      (str (format "(%d/%d)" success relevant)))
-                (propertize str 'face face))
+                (magit--propertize-face str face))
             nil)))))
      (t
       (if cached
@@ -356,9 +356,10 @@ GitHub pull request."
                                   (t 'forge-plugins-github-actions-warning)))
                            (beg (point)))
                       (insert "  ")
-                      (insert (propertize (format "%-15s" status-str) 'face face))
+                      (insert (magit--propertize-face
+                               (format "%-15s" status-str) face))
                       (insert " ")
-                      (insert (propertize name 'face face))
+                      (insert name)
                       (insert "\n")
                       (add-text-properties
                        beg (point)
@@ -503,7 +504,9 @@ Keybindings:
         (time-str (plist-get parsed-line :time))
         (text (plist-get parsed-line :text)))
     (when time-str
-      (insert (propertize time-str 'face 'forge-plugins-github-actions-log-time) " "))
+      (insert (magit--propertize-face
+               time-str 'forge-plugins-github-actions-log-time)
+              " "))
     (when text
       (let ((face (cond
                    ((eq type 'command) 'forge-plugins-github-actions-log-command)
@@ -514,7 +517,7 @@ Keybindings:
                    ((eq type 'debug) 'magit-dimmed)
                    (t nil))))
         (if face
-            (insert (propertize text 'face face))
+            (insert (magit--propertize-face text face))
           (insert text))))
     (insert "\n")))
 
