@@ -358,7 +358,7 @@ GitHub pull request."
                       (insert "  ")
                       (insert (propertize (format "%-15s" status-str) 'face face))
                       (insert " ")
-                      (insert (propertize name 'face 'magit-section-highlight))
+                      (insert (propertize name 'face face))
                       (insert "\n")
                       (add-text-properties
                        beg (point)
