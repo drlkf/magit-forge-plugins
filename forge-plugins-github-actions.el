@@ -31,6 +31,8 @@
 (require 'ansi-color)
 (require 'cl-lib)
 
+(declare-function evil-define-key* "evil-core")
+
 (defconst forge-plugins-github-actions-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
 
@@ -426,7 +428,7 @@ and UNPAGINATE are as in `forge--rest'."
 ;; `B' and `r' would otherwise be shadowed by the global motion/normal maps.
 ;; Bind them in those states so they win.
 (with-eval-after-load 'evil
-  (evil-define-key '(motion normal) forge-plugins-github-actions-log-mode-map
+  (evil-define-key* '(motion normal) forge-plugins-github-actions-log-mode-map
     "B" #'forge-plugins-github-actions-log-browse-url
     "r" #'revert-buffer
     "q" #'quit-window))
