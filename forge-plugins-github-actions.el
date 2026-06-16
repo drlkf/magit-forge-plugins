@@ -352,9 +352,10 @@ GitHub pull request."
                     (let* ((name (alist-get 'name run))
                            (status (alist-get 'status run))
                            (conclusion (alist-get 'conclusion run))
-                           (status-str (if (equal status "completed")
-                                           conclusion
-                                         status))
+                           (status-str (or (if (equal status "completed")
+                                               conclusion
+                                             status)
+                                           "unknown"))
                            (face (cond
                                   ((equal conclusion "success")
                                    'forge-plugins-github-actions-success)
@@ -364,8 +365,9 @@ GitHub pull request."
                                   (t 'forge-plugins-github-actions-warning)))
                            (beg (point)))
                       (insert "  ")
-                      (insert (magit--propertize-face
-                               (format "%-15s" status-str) face))
+                      (insert (magit--propertize-face status-str face))
+                      (insert (make-string
+                               (max 0 (- 15 (string-width status-str))) ?\s))
                       (insert " ")
                       (insert name)
                       (insert "\n")
