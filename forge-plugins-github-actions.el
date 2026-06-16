@@ -263,8 +263,21 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
         (forge-plugins-github-actions--fetch-done)
         (forge-plugins-github-actions--schedule-refresh)))))
 
-(defun forge-plugins-github-actions--get-status-string (topic)
-  "Return the formatted status string for TOPIC, triggering a fetch if needed."
+(defun forge-plugins-github-actions--insert-faced (text face)
+  "Insert TEXT and overlay it with FACE so it renders above section highlight.
+The overlay uses `priority' 2, matching `forge--insert-topic-labels', so the
+status faces win over the `magit-section-highlight' overlay (which has no
+explicit priority) when the section is current."
+  (let ((beg (point)))
+    (insert text)
+    (let ((o (make-overlay beg (point))))
+      (overlay-put o 'priority 2)
+      (overlay-put o 'evaporate t)
+      (overlay-put o 'font-lock-face face))))
+
+(defun forge-plugins-github-actions--status-summary (topic)
+  "Return the status summary for TOPIC, triggering a fetch if needed.
+The return value is a cons cell (STR . FACE) or nil."
   (let* ((id (oref topic id))
          (head-rev (oref topic head-rev))
          (cached (gethash id forge-plugins-github-actions--cache)))
@@ -284,12 +297,11 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
            "Cache hit for topic %s (head-rev: %s): total=%s, success=%s, failure=%s, skipped=%s"
            id head-rev total success failure skipped)
           (if (and relevant (> relevant 0))
-              (let* ((face (cond
-                            ((> failure 0) 'forge-plugins-github-actions-failure)
-                            ((= success relevant) 'forge-plugins-github-actions-success)
-                            (t 'forge-plugins-github-actions-warning)))
-                     (str (format "(%d/%d)" success relevant)))
-                (magit--propertize-face str face))
+              (let ((face (cond
+                           ((> failure 0) 'forge-plugins-github-actions-failure)
+                           ((= success relevant) 'forge-plugins-github-actions-success)
+                           (t 'forge-plugins-github-actions-warning))))
+                (cons (format "(%d/%d)" success relevant) face))
             nil)))))
      (t
       (if cached
@@ -302,6 +314,11 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
                (list :head-rev head-rev :fetching t) forge-plugins-github-actions--cache)
       (forge-plugins-github-actions--enqueue topic)
       nil))))
+
+(defun forge-plugins-github-actions--get-status-string (topic)
+  "Return the formatted status string for TOPIC, triggering a fetch if needed."
+  (when-let ((summary (forge-plugins-github-actions--status-summary topic)))
+    (magit--propertize-face (car summary) (cdr summary))))
 
 (defun forge-plugins-github-actions--format-topic-line (orig-fun topic &optional width)
   "Around advice to append GitHub Actions status to the topic line.
@@ -332,20 +349,21 @@ GitHub pull request."
            (head-rev (oref topic head-rev))
            (cached (gethash id forge-plugins-github-actions--cache)))
       (magit-insert-section (github-actions)
-        (magit-insert-heading
-          (let ((summary (forge-plugins-github-actions--get-status-string topic)))
-            (if summary
-                (concat (magit--propertize-face "Actions " 'magit-section-heading)
-                        summary)
-              "Actions")))
+        (let ((summary (forge-plugins-github-actions--status-summary topic)))
+          (insert (magit--propertize-face "Actions" 'magit-section-heading))
+          (when summary
+            (insert " ")
+            (forge-plugins-github-actions--insert-faced
+             (car summary) (cdr summary)))
+          (magit-insert-heading))
         (magit-insert-section-body
           (cond
            ((and cached (equal (plist-get cached :head-rev) head-rev))
             (cond
              ((plist-get cached :error)
-              (insert
-               (magit--propertize-face "error" 'forge-plugins-github-actions-failure)
-               "\n"))
+              (forge-plugins-github-actions--insert-faced
+               "error" 'forge-plugins-github-actions-failure)
+              (insert "\n"))
              (t
               (if-let* ((runs (plist-get cached :runs)))
                   (dolist (run runs)
@@ -365,7 +383,7 @@ GitHub pull request."
                                   (t 'forge-plugins-github-actions-warning)))
                            (beg (point)))
                       (insert "  ")
-                      (insert (magit--propertize-face status-str face))
+                      (forge-plugins-github-actions--insert-faced status-str face)
                       (insert (make-string
                                (max 0 (- 15 (string-width status-str))) ?\s))
                       (insert " ")
@@ -379,7 +397,8 @@ GitHub pull request."
            ((and cached (plist-get cached :fetching))
             (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n"))
            (t
-            (forge-plugins-github-actions--get-status-string topic)
+            ;; The fetch was already enqueued by the heading's
+            ;; `forge-plugins-github-actions--status-summary' call above.
             (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n")))
           (insert "\n"))))))
 
