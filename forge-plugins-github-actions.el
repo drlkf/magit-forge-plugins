@@ -27,6 +27,8 @@
 
 (require 'forge nil t)
 (require 'forge-topic nil t)
+(require 'forge-pullreq nil t)
+(require 'magit-status nil t)
 (require 'magit-section nil t)
 (require 'ansi-color)
 (require 'cl-lib)
@@ -840,6 +842,63 @@ into one collapsible section per step, matching GitHub's web UI."
           (forge-plugins-github-actions--debug
            "Failed to request re-run of check run %s: %S" run-name err))))))
 
+(defun forge-plugins-github-actions--invalidate (topic)
+  "Drop the cached GitHub Actions status for TOPIC, forcing a refetch.
+The next call to `forge-plugins-github-actions--status-summary' for
+TOPIC then misses the cache and enqueues a fresh fetch."
+  (remhash (oref topic id) forge-plugins-github-actions--cache))
+
+(defun forge-plugins-github-actions--invalidate-status-pullreqs ()
+  "Invalidate the cached status of every GitHub pull request displayed.
+Walk the current buffer's Magit section tree and invalidate the
+check-run cache for each section whose value is a GitHub pull
+request.  Return the number of pull requests invalidated."
+  (let ((count 0))
+    (when (bound-and-true-p magit-root-section)
+      (letrec ((walk
+                (lambda (section)
+                  (let ((value (oref section value)))
+                    (when (and (forge-pullreq-p value)
+                               (cl-typep (forge-get-repository value)
+                                         'forge-github-repository))
+                      (forge-plugins-github-actions--invalidate value)
+                      (cl-incf count)))
+                  (dolist (child (oref section children))
+                    (funcall walk child)))))
+        (funcall walk magit-root-section)))
+    count))
+
+(defun forge-plugins-github-actions-refresh ()
+  "Refresh the GitHub Actions status in the current buffer.
+Invalidate the cached check-run results for the relevant pull
+request(s) and refresh the buffer, which re-fetches them from the
+forge.  Unlike `magit-refresh' (\\[magit-refresh]), which keeps the
+cached status as long as the head revision is unchanged, this forces
+a fresh fetch.
+
+In a pull request topic buffer this refreshes the buffer's own
+topic; in a Magit status buffer it refreshes every GitHub pull
+request currently displayed."
+  (interactive)
+  (let ((invalidated
+         (cond
+          ((and (derived-mode-p 'forge-pullreq-mode)
+                (bound-and-true-p forge-buffer-topic)
+                (forge-pullreq-p forge-buffer-topic)
+                (cl-typep (forge-get-repository forge-buffer-topic)
+                          'forge-github-repository))
+           (forge-plugins-github-actions--invalidate forge-buffer-topic)
+           1)
+          ((derived-mode-p 'magit-status-mode)
+           (forge-plugins-github-actions--invalidate-status-pullreqs))
+          (t 0))))
+    (if (and invalidated (> invalidated 0))
+        (progn
+          (forge-plugins-github-actions--debug
+           "Manual refresh invalidated %d pull request(s)" invalidated)
+          (magit-refresh-buffer))
+      (user-error "No GitHub pull requests to refresh"))))
+
 ;;;###autoload
 (defun forge-plugins-github-actions-enable ()
   "Enable GitHub Actions status integration."
@@ -848,7 +907,11 @@ into one collapsible section per step, matching GitHub's web UI."
   (advice-add 'forge--format-topic-line
               :around #'forge-plugins-github-actions--format-topic-line)
   (advice-add 'forge-insert-post
-              :before #'forge-plugins-github-actions--insert-commits-actions))
+              :before #'forge-plugins-github-actions--insert-commits-actions)
+  (keymap-set forge-pullreq-mode-map "C-c C-a"
+              #'forge-plugins-github-actions-refresh)
+  (keymap-set magit-status-mode-map "C-c C-a"
+              #'forge-plugins-github-actions-refresh))
 
 ;;;###autoload
 (defun forge-plugins-github-actions-disable ()
@@ -858,7 +921,9 @@ into one collapsible section per step, matching GitHub's web UI."
   (advice-remove 'forge-insert-post
                  #'forge-plugins-github-actions--insert-commits-actions)
   (advice-remove 'forge--format-topic-line
-                 #'forge-plugins-github-actions--format-topic-line))
+                 #'forge-plugins-github-actions--format-topic-line)
+  (keymap-unset forge-pullreq-mode-map "C-c C-a" t)
+  (keymap-unset magit-status-mode-map "C-c C-a" t))
 
 ;;;###autoload
 (defcustom forge-plugins-github-actions-enable nil
