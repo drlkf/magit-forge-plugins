@@ -12,7 +12,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
 
 (setq forge-plugins-topic-format-enable t
       forge-plugins-github-actions-enable t
-      forge-plugins-pullreq-commits-enable t)
+      forge-plugins-pullreq-commits-enable t
+      forge-plugins-pullreq-approvals-enable t)
 
 (forge-plugins-enable)
 ```
@@ -25,6 +26,7 @@ With `use-package`:
   (forge-plugins-topic-format-enable t)
   (forge-plugins-github-actions-enable t)
   (forge-plugins-pullreq-commits-enable t)
+  (forge-plugins-pullreq-approvals-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -126,3 +128,39 @@ This plugin restricts the section to `forge`'s canonical range, `<remote>/<base-
 **Flag:** `forge-plugins-pullreq-commits-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
+
+## Pull Request Approvals
+
+Display the approval status of GitHub pull requests on their topic lines (in topic/notification lists and in the Magit status buffer) and in the pull request topic view. The indicator is formatted as `<x/y>`, where `x` is the current number of approvals and `y` is the number of approvals required by the target branch's rules. For example, if a pull request has three review requests but the branch only requires one approval, and one of them has approved, the indicator shows `<1/1>`.
+
+The current approval count `x` is derived from the pull request's reviews: per reviewer only their latest meaningful review state is considered (a later `COMMENTED` or `PENDING` review does not change it), and an approval is counted when that latest state is `APPROVED`. The required count `y` is read from the target branch's active **rulesets** (`GET /repos/:owner/:repo/rules/branches/:base-ref`), taking the largest `required_approving_review_count` across all `pull_request` rules. When the target branch has no required-approvals rule, the indicator is hidden entirely (even if some approvals exist).
+
+The indicator is faced green (`forge-plugins-pullreq-approvals-met`) once the required number of approvals is reached, and yellow (`forge-plugins-pullreq-approvals-pending`) while it is not. The angle-bracket form `<x/y>` distinguishes it from the GitHub Actions indicator `(x/y)`.
+
+The same summary is appended to a collapsible `Approvals` section (with `TAB`) in `forge-pullreq-mode`, placed directly before the pull request description. Its body lists each reviewer with their latest review state (`approved`, `changes requested` or `dismissed`).
+
+**Flag:** `forge-plugins-pullreq-approvals-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+> **Limitation:** the required approval count is read from rulesets only. Required reviews configured through *classic* branch protection are exposed by GitHub through an admin-only endpoint and are therefore not reflected here.
+
+### Customization
+
+- `forge-plugins-pullreq-approvals-debug` -- Whether to enable debug logging.
+If non-nil, debug logs are written to the buffer `*forge-plugins-pullreq-approvals-debug*`.
+
+- `forge-plugins-pullreq-approvals-max-concurrent-requests` -- Maximum number
+of approvals fetches to run concurrently (default `6`). Fetches are queued and
+dispatched as in-flight requests complete, so status for many pull requests is
+fetched in parallel without blocking Emacs or hammering the GitHub API.
+
+- `forge-plugins-pullreq-approvals-refresh-delay` -- Delay in seconds (default
+`0.3`) before refreshing buffers after a fetch completes. Completions within
+this window are coalesced into a single refresh.
+
+### Keybindings
+
+In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mode`, the following keybinding is available buffer-wide:
+
+- `C-c C-v` -- Refresh the pull request approvals, forcing a fresh fetch from the forge. In a pull request buffer this refreshes that pull request; in a status buffer it refreshes every GitHub pull request currently displayed. Approvals can change without a new push (the head revision is unchanged), in which case magit's `g` (`magit-refresh`) reuses the cached status; this command bypasses the cache and re-fetches the reviews and branch rules.
