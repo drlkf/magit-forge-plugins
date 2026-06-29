@@ -69,6 +69,10 @@ Display GitHub Actions status on pull request lines and in the topic view, with 
 
 The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the number of non-skipped check runs, e.g. `(3/4)` for four relevant runs of which three succeeded.
 
+A pull request whose head revision has not yet been synced (its `head-rev` is `nil`) cannot have its check runs fetched; its `Actions` section shows `not synced — run forge-pull` instead, and (with debug logging enabled) the skip is logged.
+
+When enabling against a `forge` version other than the tested one below, a one-shot, non-fatal warning is emitted via `display-warning`; the feature still enables.
+
 **Flag:** `forge-plugins-github-actions-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`

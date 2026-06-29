@@ -32,11 +32,15 @@
 (require 'magit-section nil t)
 (require 'ansi-color)
 (require 'cl-lib)
+(require 'package)
 
 (declare-function evil-define-key* "evil-core")
 
 (defconst forge-plugins-github-actions-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
+
+(defvar forge-plugins-github-actions--version-warned nil
+  "Non-nil once the forge version-drift warning has been shown this session.")
 
 ;;;###autoload
 (defcustom forge-plugins-github-actions-debug nil
@@ -65,6 +69,12 @@ single buffer refresh to avoid blocking Emacs with a refresh storm."
   :package-version '(forge-plugins-github-actions . "0.1.0")
   :group 'forge
   :type 'number)
+
+(defun forge-plugins-github-actions--forge-version ()
+  "Return the installed forge version string, or nil if undeterminable."
+  (ignore-errors
+    (when-let* ((desc (cadr (assq 'forge package-alist))))
+      (package-version-join (package-desc-version desc)))))
 
 (defun forge-plugins-github-actions--debug (format-string &rest args)
   "Log a message to the debug buffer if debug logging is enabled.
@@ -284,7 +294,10 @@ The return value is a cons cell (STR . FACE) or nil."
          (head-rev (oref topic head-rev))
          (cached (gethash id forge-plugins-github-actions--cache)))
     (cond
-     ((not head-rev) nil)
+     ((not head-rev)
+      (forge-plugins-github-actions--debug
+       "Skipping topic %s: head-rev is nil (not yet synced)" id)
+      nil)
      ((and cached (equal (plist-get cached :head-rev) head-rev))
       (cond
        ((plist-get cached :fetching) nil)
@@ -399,9 +412,13 @@ GitHub pull request."
            ((and cached (plist-get cached :fetching))
             (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n"))
            (t
-            ;; The fetch was already enqueued by the heading's
-            ;; `forge-plugins-github-actions--status-summary' call above.
-            (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n")))
+            (if head-rev
+                ;; The fetch was already enqueued by the heading's
+                ;; `forge-plugins-github-actions--status-summary' call above.
+                (insert (magit--propertize-face "fetching..." 'magit-dimmed) "\n")
+              (insert (magit--propertize-face
+                       "not synced — run `forge-pull'" 'magit-dimmed)
+                      "\n"))))
           (insert "\n"))))))
 
 (cl-defun forge-plugins-github-actions--rest-raw
@@ -903,6 +920,16 @@ request currently displayed."
 (defun forge-plugins-github-actions-enable ()
   "Enable GitHub Actions status integration."
   (interactive)
+  (let ((version (forge-plugins-github-actions--forge-version)))
+    (when (and version
+               (not forge-plugins-github-actions--version-warned)
+               (not (equal version forge-plugins-github-actions-tested-on-forge)))
+      (setq forge-plugins-github-actions--version-warned t)
+      (display-warning
+       'forge-plugins-github-actions
+       (format "forge %s differs from tested %s; GitHub Actions integration may misbehave"
+               version forge-plugins-github-actions-tested-on-forge)
+       :warning)))
   (setq forge-plugins-github-actions-enable t)
   (advice-add 'forge--format-topic-line
               :around #'forge-plugins-github-actions--format-topic-line)
