@@ -13,7 +13,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
 (setq forge-plugins-topic-format-enable t
       forge-plugins-github-actions-enable t
       forge-plugins-pullreq-commits-enable t
-      forge-plugins-pullreq-approvals-enable t)
+      forge-plugins-pullreq-approvals-enable t
+      forge-plugins-github-projects-enable t)
 
 (forge-plugins-enable)
 ```
@@ -27,6 +28,7 @@ With `use-package`:
   (forge-plugins-github-actions-enable t)
   (forge-plugins-pullreq-commits-enable t)
   (forge-plugins-pullreq-approvals-enable t)
+  (forge-plugins-github-projects-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -164,3 +166,31 @@ this window are coalesced into a single refresh.
 In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mode`, the following keybinding is available buffer-wide:
 
 - `C-c C-v` -- Refresh the pull request approvals, forcing a fresh fetch from the forge. In a pull request buffer this refreshes that pull request; in a status buffer it refreshes every GitHub pull request currently displayed. Approvals can change without a new push (the head revision is unchanged), in which case magit's `g` (`magit-refresh`) reuses the cached status; this command bypasses the cache and re-fetches the reviews and branch rules.
+
+## GitHub Projects
+
+Read-only viewer for [GitHub Projects v2](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects) — the Kanban-style project boards. `forge` itself models issues, pull requests and discussions, but has no support for Projects v2, which is exposed exclusively through GitHub's GraphQL API (the classic REST Projects API was sunset on 2025-04-01).
+
+Run `M-x forge-plugins-github-projects` from any buffer associated with a GitHub forge repository. It lists the repository's open Projects v2 boards; if there is more than one, you are prompted to pick. The selected board opens in a dedicated `forge-plugins-github-projects-mode` buffer where items are grouped into columns by the board's single-select `Status` field (the field that drives the board columns), in the board's own column order, with a trailing `No Status` bucket for items that have no status value. Each column is a collapsible `magit` section (with `TAB`) whose heading shows the column name and card count. Each card line shows the item's type (`Issue`, `PullRequest` or `DraftIssue`), its number and its title; closed and merged items are dimmed.
+
+Queries go through `ghub-query` — the GraphQL entry point of `ghub`, the same library `forge` uses — authenticated with `:auth 'forge', so the repository's existing token and host are reused. Nothing is mutated; this plugin only reads.
+
+**Flag:** `forge-plugins-github-projects-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+> **Scope:** read-only. Moving cards between columns (which is a single-select field mutation, `updateProjectV2ItemFieldValue`) is intentionally not implemented here.
+
+### Token scope
+
+Reading Projects v2 requires the `read:project` scope (or `project` for read/write) on the token `forge` uses. A classic token without it will get a permission error from the GraphQL API.
+
+### Keybindings
+
+In the board buffer:
+
+- `g` -- Re-fetch and redraw the board.
+
+On a card line:
+
+- `RET` / `b` -- Open the card in the browser.
