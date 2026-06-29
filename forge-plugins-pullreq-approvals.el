@@ -308,6 +308,26 @@ so the status faces win over the `magit-section-highlight' overlay
       (overlay-put o 'evaporate t)
       (overlay-put o 'font-lock-face face))))
 
+(defun forge-plugins-pullreq-approvals--promote-status-overlay (beg end)
+  "Overlay status spans marked between BEG and END so they survive highlight.
+The topic-line indicator appended by
+`forge-plugins-pullreq-approvals--format-topic-line' carries the
+`forge-plugins-pullreq-approvals-status' text property.  Promoting it to
+a `priority' 2 overlay matches `forge--insert-topic-labels' so the status
+face wins over the `magit-section-highlight' overlay (a plain
+`font-lock-face' text property is otherwise shadowed by that overlay)."
+  (let ((pos beg))
+    (while (and pos (< pos end))
+      (let ((next (next-single-property-change
+                   pos 'forge-plugins-pullreq-approvals-status nil end)))
+        (when (get-text-property pos 'forge-plugins-pullreq-approvals-status)
+          (let ((o (make-overlay pos next)))
+            (overlay-put o 'priority 2)
+            (overlay-put o 'evaporate t)
+            (overlay-put o 'font-lock-face
+                         (get-text-property pos 'font-lock-face))))
+        (setq pos next)))))
+
 (defun forge-plugins-pullreq-approvals--summary (topic)
   "Return the approvals summary for TOPIC, triggering a fetch if needed.
 The return value is a cons cell (STR . FACE), or nil when there is
@@ -352,9 +372,21 @@ result has the `<x/y>' indicator appended for GitHub pull requests."
              (forge-plugins-pullreq-approvals--target-p topic))
         (if-let ((summary (forge-plugins-pullreq-approvals--summary topic)))
             (concat line " "
-                    (magit--propertize-face (car summary) (cdr summary)))
+                    (propertize
+                     (magit--propertize-face (car summary) (cdr summary))
+                     'forge-plugins-pullreq-approvals-status t))
           line)
       line)))
+
+(defun forge-plugins-pullreq-approvals--insert-topic (orig-fun topic
+                                                              &optional width)
+  "Around advice to promote the approvals badge to a highlight-proof overlay.
+ORIG-FUN is `forge--insert-topic', called with TOPIC and WIDTH; the
+indicator appended by `forge-plugins-pullreq-approvals--format-topic-line'
+is then re-rendered as a `priority' 2 overlay over the inserted line."
+  (let ((beg (point)))
+    (funcall orig-fun topic width)
+    (forge-plugins-pullreq-approvals--promote-status-overlay beg (point))))
 
 (defun forge-plugins-pullreq-approvals--insert-section (post &optional topic)
   "Insert an Approvals section as a sibling after the description post.
@@ -466,6 +498,8 @@ request currently displayed."
   (setq forge-plugins-pullreq-approvals-enable t)
   (advice-add 'forge--format-topic-line
               :around #'forge-plugins-pullreq-approvals--format-topic-line)
+  (advice-add 'forge--insert-topic
+              :around #'forge-plugins-pullreq-approvals--insert-topic)
   (advice-add 'forge-insert-post
               :before #'forge-plugins-pullreq-approvals--insert-section)
   (keymap-set forge-pullreq-mode-map "C-c C-v"
@@ -480,6 +514,8 @@ request currently displayed."
   (setq forge-plugins-pullreq-approvals-enable nil)
   (advice-remove 'forge-insert-post
                  #'forge-plugins-pullreq-approvals--insert-section)
+  (advice-remove 'forge--insert-topic
+                 #'forge-plugins-pullreq-approvals--insert-topic)
   (advice-remove 'forge--format-topic-line
                  #'forge-plugins-pullreq-approvals--format-topic-line)
   (keymap-unset forge-pullreq-mode-map "C-c C-v" t)

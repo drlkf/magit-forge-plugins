@@ -287,6 +287,26 @@ explicit priority) when the section is current."
       (overlay-put o 'evaporate t)
       (overlay-put o 'font-lock-face face))))
 
+(defun forge-plugins-github-actions--promote-status-overlay (beg end)
+  "Overlay status spans marked between BEG and END so they survive highlight.
+The topic-line status appended by
+`forge-plugins-github-actions--format-topic-line' carries the
+`forge-plugins-github-actions-status' text property.  Promoting it to a
+`priority' 2 overlay matches `forge--insert-topic-labels' so the status
+face wins over the `magit-section-highlight' overlay (a plain
+`font-lock-face' text property is otherwise shadowed by that overlay)."
+  (let ((pos beg))
+    (while (and pos (< pos end))
+      (let ((next (next-single-property-change
+                   pos 'forge-plugins-github-actions-status nil end)))
+        (when (get-text-property pos 'forge-plugins-github-actions-status)
+          (let ((o (make-overlay pos next)))
+            (overlay-put o 'priority 2)
+            (overlay-put o 'evaporate t)
+            (overlay-put o 'font-lock-face
+                         (get-text-property pos 'font-lock-face))))
+        (setq pos next)))))
+
 (defun forge-plugins-github-actions--status-summary (topic)
   "Return the status summary for TOPIC, triggering a fetch if needed.
 The return value is a cons cell (STR . FACE) or nil."
@@ -333,7 +353,17 @@ The return value is a cons cell (STR . FACE) or nil."
 (defun forge-plugins-github-actions--get-status-string (topic)
   "Return the formatted status string for TOPIC, triggering a fetch if needed."
   (when-let ((summary (forge-plugins-github-actions--status-summary topic)))
-    (magit--propertize-face (car summary) (cdr summary))))
+    (propertize (magit--propertize-face (car summary) (cdr summary))
+                'forge-plugins-github-actions-status t)))
+
+(defun forge-plugins-github-actions--insert-topic (orig-fun topic &optional width)
+  "Around advice to promote the status badge to a highlight-proof overlay.
+ORIG-FUN is `forge--insert-topic', called with TOPIC and WIDTH; the
+status appended by `forge-plugins-github-actions--format-topic-line' is
+then re-rendered as a `priority' 2 overlay over the inserted line."
+  (let ((beg (point)))
+    (funcall orig-fun topic width)
+    (forge-plugins-github-actions--promote-status-overlay beg (point))))
 
 (defun forge-plugins-github-actions--format-topic-line (orig-fun topic &optional width)
   "Around advice to append GitHub Actions status to the topic line.
@@ -933,6 +963,8 @@ request currently displayed."
   (setq forge-plugins-github-actions-enable t)
   (advice-add 'forge--format-topic-line
               :around #'forge-plugins-github-actions--format-topic-line)
+  (advice-add 'forge--insert-topic
+              :around #'forge-plugins-github-actions--insert-topic)
   (advice-add 'forge-insert-post
               :before #'forge-plugins-github-actions--insert-commits-actions)
   (keymap-set forge-pullreq-mode-map "C-c C-a"
@@ -947,6 +979,8 @@ request currently displayed."
   (setq forge-plugins-github-actions-enable nil)
   (advice-remove 'forge-insert-post
                  #'forge-plugins-github-actions--insert-commits-actions)
+  (advice-remove 'forge--insert-topic
+                 #'forge-plugins-github-actions--insert-topic)
   (advice-remove 'forge--format-topic-line
                  #'forge-plugins-github-actions--format-topic-line)
   (keymap-unset forge-pullreq-mode-map "C-c C-a" t)
