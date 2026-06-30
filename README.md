@@ -159,8 +159,10 @@ dispatched as in-flight requests complete, so status for many pull requests is
 fetched in parallel without blocking Emacs or hammering the GitHub API.
 
 - `forge-plugins-pullreq-approvals-refresh-delay` -- Delay in seconds (default
-`0.3`) before refreshing buffers after a fetch completes. Completions within
-this window are coalesced into a single refresh.
+`0.3`) before refreshing pull request buffers after a fetch completes. As
+each fetch completes, the per-topic approvals badge is patched in place in
+topic-list buffers (Magit status, forge topics, notifications), so those
+update progressively without ever re-rendering the whole buffer.
 
 ### Keybindings
 

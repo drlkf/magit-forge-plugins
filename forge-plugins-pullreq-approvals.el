@@ -67,9 +67,13 @@ GitHub API is not hammered while keeping fetches concurrent."
 
 ;;;###autoload
 (defcustom forge-plugins-pullreq-approvals-refresh-delay 0.3
-  "Delay in seconds before refreshing buffers after a fetch completes.
-Multiple fetch completions within this window are coalesced into a
-single buffer refresh to avoid blocking Emacs with a refresh storm."
+  "Delay in seconds before refreshing pull request buffers after a fetch.
+Topic-list buffers (Magit status, forge topics and notifications) have
+their per-topic approvals badge patched in place as each fetch
+completes, so they update progressively without a full re-render.
+Only pull request topic buffers, which carry the full Approvals
+section, are refreshed via `magit-refresh-buffer'; completions within
+this window are coalesced into a single such refresh."
   :package-version '(forge-plugins-pullreq-approvals . "0.1.0")
   :group 'forge
   :type 'number)
@@ -116,20 +120,23 @@ Values are integers, or the symbol `none' when the branch has no
 required-approvals rule.")
 
 (defun forge-plugins-pullreq-approvals--refresh-buffers ()
-  "Refresh all visible or active Magit and Forge buffers."
+  "Refresh open pull request topic buffers.
+Only `forge-pullreq-mode' buffers are fully refreshed, because that
+is the only mode carrying the Approvals section.  Topic-list buffers
+\(`forge-topics-mode', `magit-status-mode', `forge-notifications-mode')
+have their per-topic approvals badge patched in place by
+`forge-plugins-pullreq-approvals--update-topic-line' instead, so they
+never incur a full re-render."
   (dolist (buf (buffer-list))
     (with-current-buffer buf
-      (when (or (derived-mode-p 'forge-topics-mode)
-                (derived-mode-p 'magit-status-mode)
-                (derived-mode-p 'forge-notifications-mode)
-                (derived-mode-p 'forge-pullreq-mode))
+      (when (derived-mode-p 'forge-pullreq-mode)
         (magit-refresh-buffer)))))
 
 (defvar forge-plugins-pullreq-approvals--refresh-timer nil
-  "Pending timer used to coalesce buffer refreshes.")
+  "Pending timer used to coalesce pull request buffer refreshes.")
 
 (defun forge-plugins-pullreq-approvals--schedule-refresh ()
-  "Schedule a debounced refresh of Magit and Forge buffers.
+  "Schedule a debounced refresh of open pull request buffers.
 Multiple calls within
 `forge-plugins-pullreq-approvals-refresh-delay' seconds are
 coalesced into a single refresh so that a burst of fetch
@@ -142,6 +149,66 @@ completions does not trigger a refresh storm."
          (lambda ()
            (setq forge-plugins-pullreq-approvals--refresh-timer nil)
            (forge-plugins-pullreq-approvals--refresh-buffers)))))
+
+(defun forge-plugins-pullreq-approvals--find-topic-section (id)
+  "Return the Magit section whose value is a pull request with ID.
+Search the current buffer's section tree; return nil when absent."
+  (when (bound-and-true-p magit-root-section)
+    (catch 'found
+      (letrec ((walk
+                (lambda (section)
+                  (let ((value (oref section value)))
+                    (when (and (forge-pullreq-p value)
+                               (equal (oref value id) id))
+                      (throw 'found section)))
+                  (dolist (child (oref section children))
+                    (funcall walk child)))))
+        (funcall walk magit-root-section))
+      nil)))
+
+(defun forge-plugins-pullreq-approvals--patch-line-badge (section topic)
+  "Replace the approvals badge on SECTION's topic line for TOPIC in place.
+The badge text (carrying the `forge-plugins-pullreq-approvals-status'
+property) and its promoted overlays are removed, then the current
+badge from the cache is re-inserted and re-promoted.  This reproduces
+exactly what the full-render path emits, so a later `magit-refresh'
+yields identical output."
+  (save-excursion
+    (let* ((start (oref section start))
+           (eol (progn (goto-char start) (line-end-position)))
+           (badge (text-property-any start eol
+                                     'forge-plugins-pullreq-approvals-status t)))
+      (with-silent-modifications
+        (let ((inhibit-read-only t))
+          (when badge
+            (dolist (o (overlays-in badge eol))
+              (when (overlay-get o 'forge-plugins-pullreq-approvals-badge)
+                (delete-overlay o)))
+            (delete-region (if (eq (char-before badge) ?\s) (1- badge) badge)
+                           eol)
+            (setq eol (line-end-position)))
+          (when-let ((status-str
+                      (forge-plugins-pullreq-approvals--get-status-string topic)))
+            (goto-char eol)
+            (let ((beg (point)))
+              (insert " " status-str)
+              (forge-plugins-pullreq-approvals--promote-status-overlay
+               beg (point)))))))))
+
+(defun forge-plugins-pullreq-approvals--update-topic-line (topic)
+  "Patch TOPIC's approvals badge in every open topic-list buffer.
+Updates only the single topic line in place, avoiding the
+whole-buffer re-render that `magit-refresh-buffer' performs."
+  (let ((id (oref topic id)))
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (or (derived-mode-p 'forge-topics-mode)
+                       (derived-mode-p 'magit-status-mode)
+                       (derived-mode-p 'forge-notifications-mode))
+                   (bound-and-true-p magit-root-section))
+          (when-let ((section
+                      (forge-plugins-pullreq-approvals--find-topic-section id)))
+            (forge-plugins-pullreq-approvals--patch-line-badge section topic)))))))
 
 (defvar forge-plugins-pullreq-approvals--queue nil
   "FIFO list of topics pending an approvals fetch.")
@@ -238,6 +305,7 @@ the required approval count, and RESULT the cons returned by
    "Stored approvals for topic %s: approved=%s required=%s"
    (oref topic id) (car result) required)
   (forge-plugins-pullreq-approvals--fetch-done)
+  (forge-plugins-pullreq-approvals--update-topic-line topic)
   (forge-plugins-pullreq-approvals--schedule-refresh))
 
 (defun forge-plugins-pullreq-approvals--store-error (topic head-rev)
@@ -246,6 +314,7 @@ the required approval count, and RESULT the cons returned by
            (list :head-rev head-rev :fetching nil :error t)
            forge-plugins-pullreq-approvals--cache)
   (forge-plugins-pullreq-approvals--fetch-done)
+  (forge-plugins-pullreq-approvals--update-topic-line topic)
   (forge-plugins-pullreq-approvals--schedule-refresh))
 
 (defun forge-plugins-pullreq-approvals--fetch-reviews (topic head-rev required)
@@ -324,6 +393,7 @@ face wins over the `magit-section-highlight' overlay (a plain
           (let ((o (make-overlay pos next)))
             (overlay-put o 'priority 2)
             (overlay-put o 'evaporate t)
+            (overlay-put o 'forge-plugins-pullreq-approvals-badge t)
             (overlay-put o 'font-lock-face
                          (get-text-property pos 'font-lock-face))))
         (setq pos next)))))
@@ -357,6 +427,15 @@ fetch, or an error)."
       (forge-plugins-pullreq-approvals--enqueue topic)
       nil))))
 
+(defun forge-plugins-pullreq-approvals--get-status-string (topic)
+  "Return the formatted approvals indicator for TOPIC, or nil.
+Triggers a fetch if needed via
+`forge-plugins-pullreq-approvals--summary'."
+  (when-let ((summary (forge-plugins-pullreq-approvals--summary topic)))
+    (propertize
+     (magit--propertize-face (car summary) (cdr summary))
+     'forge-plugins-pullreq-approvals-status t)))
+
 (defun forge-plugins-pullreq-approvals--target-p (topic)
   "Return non-nil when TOPIC is a GitHub pull request to annotate."
   (and (forge-pullreq-p topic)
@@ -370,11 +449,9 @@ result has the `<x/y>' indicator appended for GitHub pull requests."
   (let ((line (funcall orig-fun topic width)))
     (if (and forge-plugins-pullreq-approvals-enable
              (forge-plugins-pullreq-approvals--target-p topic))
-        (if-let ((summary (forge-plugins-pullreq-approvals--summary topic)))
-            (concat line " "
-                    (propertize
-                     (magit--propertize-face (car summary) (cdr summary))
-                     'forge-plugins-pullreq-approvals-status t))
+        (if-let ((status-str
+                  (forge-plugins-pullreq-approvals--get-status-string topic)))
+            (concat line " " status-str)
           line)
       line)))
 
