@@ -93,9 +93,10 @@ requests is fetched in parallel without blocking Emacs or hammering the
 GitHub API.
 
 - `forge-plugins-github-actions-refresh-delay` -- Delay in seconds (default
-`0.3`) before refreshing buffers after a fetch completes. Completions within
-this window are coalesced into a single refresh, avoiding the refresh storm
-that previously froze the Emacs daemon.
+`0.3`) before refreshing pull request buffers after a fetch completes. As
+each fetch completes, the per-topic status badge is patched in place in
+topic-list buffers (Magit status, forge topics, notifications), so those
+update progressively without ever re-rendering the whole buffer.
 
 ### Keybindings
 
