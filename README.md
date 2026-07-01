@@ -71,7 +71,7 @@ at display time.  Example:
 
 Display GitHub Actions status on pull request lines and in the topic view, with the ability to view logs and trigger re-runs. The actions are listed under the collapsible `Actions` section (with `TAB`, default expanded), placed directly after the `Commits` section, and each individual action line is fully interactible across its whole width including the indentation. The same summary is also appended to the `Actions` section heading in `forge-pullreq-mode`.
 
-The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the number of non-skipped check runs, e.g. `(3/4)` for four relevant runs of which three succeeded.
+The pull request line indicator is formatted as `(x/y)`, where `x` is the number of successful check runs and `y` is the total number of check runs, e.g. `(3/4)` for four runs of which three succeeded. Skipped and neutral runs are non-blocking: they are still counted in `y`, but the indicator is faced green as soon as no run has failed and none is still pending, so `(1/3)` for one success plus one skipped and one neutral run renders in the success face.
 
 A pull request whose head revision has not yet been synced (its `head-rev` is `nil`) cannot have its check runs fetched; its `Actions` section shows `not synced — run forge-pull` instead, and (with debug logging enabled) the skip is logged.
 

@@ -130,6 +130,7 @@ Values are plists:
 - `:head-rev': the head-rev for which this status was fetched.
 - `:total': total number of check runs.
 - `:success': number of successful check runs.
+- `:completed': number of completed check runs (any conclusion).
 - `:runs': list of check run alists.
 - `:fetching': boolean, whether a fetch is in progress.")
 
@@ -303,25 +304,28 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
                (runs (alist-get 'check_runs value))
                (success 0)
                (failure 0)
-               (skipped 0))
+               (skipped 0)
+               (completed 0))
           (dolist (run runs)
             (let ((status (alist-get 'status run))
                   (conclusion (alist-get 'conclusion run)))
               (when (equal status "completed")
+                (cl-incf completed)
                 (cond
                  ((equal conclusion "success") (cl-incf success))
                  ((member conclusion '("failure" "timed_out" "action_required"))
                   (cl-incf failure))
                  ((equal conclusion "skipped") (cl-incf skipped))))))
           (forge-plugins-github-actions--debug
-           "Successfully fetched check runs for topic %s: total=%s, success=%s, failure=%s, skipped=%s"
-           id total success failure skipped)
+           "Successfully fetched check runs for topic %s: total=%s, success=%s, failure=%s, skipped=%s, completed=%s"
+           id total success failure skipped completed)
           (puthash id
                    (list :head-rev head-rev
                          :total total
                          :success success
                          :failure failure
                          :skipped skipped
+                         :completed completed
                          :runs runs
                          :fetching nil)
                    forge-plugins-github-actions--cache)
@@ -396,17 +400,20 @@ The return value is a cons cell (STR . FACE) or nil."
         (let* ((total (plist-get cached :total))
                (success (plist-get cached :success))
                (failure (or (plist-get cached :failure) 0))
-               (skipped (or (plist-get cached :skipped) 0))
-               (relevant (and total (- total skipped))))
+               (completed (or (plist-get cached :completed) 0))
+               (pending (and total (- total completed))))
           (forge-plugins-github-actions--debug
-           "Cache hit for topic %s (head-rev: %s): total=%s, success=%s, failure=%s, skipped=%s"
-           id head-rev total success failure skipped)
-          (if (and relevant (> relevant 0))
+           "Cache hit for topic %s (head-rev: %s): total=%s, success=%s, failure=%s, completed=%s, pending=%s"
+           id head-rev total success failure completed pending)
+          (if (and total (> total 0))
+              ;; Skipped and neutral runs are non-blocking: the badge counts
+              ;; every run in the denominator but is faced green as long as
+              ;; nothing failed and nothing is still pending.
               (let ((face (cond
                            ((> failure 0) 'forge-plugins-github-actions-failure)
-                           ((= success relevant) 'forge-plugins-github-actions-success)
-                           (t 'forge-plugins-github-actions-warning))))
-                (cons (format "(%d/%d)" success relevant) face))
+                           ((> pending 0) 'forge-plugins-github-actions-warning)
+                           (t 'forge-plugins-github-actions-success))))
+                (cons (format "(%d/%d)" success total) face))
             nil)))))
      (t
       (if cached

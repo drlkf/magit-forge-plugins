@@ -26,7 +26,7 @@
   (let* ((topic (forge-pullreq :id "T1" :head-rev "abc"))
          (forge-plugins-github-actions--cache (make-hash-table :test 'equal)))
     (puthash "T1" (list :head-rev "abc" :total 2 :success 1 :failure 0
-                        :skipped 0 :fetching nil)
+                        :skipped 0 :completed 2 :fetching nil)
              forge-plugins-github-actions--cache)
     (with-temp-buffer
       (insert "topic line\n")
@@ -42,6 +42,18 @@
           (should (equal (buffer-string) after-first))
           (goto-char (point-min))
           (should-not (re-search-forward "(1/2).*(1/2)" nil t)))))))
+
+(ert-deftest forge-plugins-github-actions-test-skipped-neutral-non-blocking ()
+  "Skipped and neutral runs count in the denominator but don't block success.
+One success, one skipped and one neutral render `(1/3)' in the success face."
+  (let* ((topic (forge-pullreq :id "T2" :head-rev "abc"))
+         (forge-plugins-github-actions--cache (make-hash-table :test 'equal)))
+    (puthash "T2" (list :head-rev "abc" :total 3 :success 1 :failure 0
+                        :completed 3 :fetching nil)
+             forge-plugins-github-actions--cache)
+    (let ((summary (forge-plugins-github-actions--status-summary topic)))
+      (should (equal (car summary) "(1/3)"))
+      (should (eq (cdr summary) 'forge-plugins-github-actions-success)))))
 
 (provide 'forge-plugins-github-actions-test)
 ;;; forge-plugins-github-actions-test.el ends here
