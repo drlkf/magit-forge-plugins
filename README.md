@@ -176,17 +176,29 @@ Read-only viewer for [GitHub Projects v2](https://docs.github.com/en/issues/plan
 
 Run `M-x forge-plugins-github-projects` from any buffer associated with a GitHub forge repository. It lists the repository's open Projects v2 boards; if there is more than one, you are prompted to pick. The selected board opens in a dedicated `forge-plugins-github-projects-mode` buffer where items are grouped into columns by the board's single-select `Status` field (the field that drives the board columns), in the board's own column order, with a trailing `No Status` bucket for items that have no status value. Each column is a collapsible `magit` section (with `TAB`) whose heading shows the column name and card count. Each card line shows the item's type (`Issue`, `PullRequest` or `DraftIssue`), its number and its title; closed and merged items are dimmed.
 
-Queries go through `ghub-query` — the GraphQL entry point of `ghub`, the same library `forge` uses — authenticated with `:auth 'forge', so the repository's existing token and host are reused. Nothing is mutated; this plugin only reads.
+Queries go through `ghub-query` — the GraphQL entry point of `ghub`, the same library `forge` uses — authenticated with `:auth 'forge`, so the repository's existing token and host are reused.
 
 **Flag:** `forge-plugins-github-projects-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
 
-> **Scope:** read-only. Moving cards between columns (which is a single-select field mutation, `updateProjectV2ItemFieldValue`) is intentionally not implemented here.
+### Topic integration
+
+When enabled, issue and pull request topic buffers gain a collapsible `Projects` section (with `TAB`) that lists the Projects v2 boards the topic belongs to and its status on each (`[no status]` when unset). Membership is fetched asynchronously and cached, so opening a topic never blocks on the network; the section shows `fetching...` until the first fetch completes. `RET` / `b` on a project line opens that project in the browser.
+
+The section is accompanied by a `p` prefix keymap in topic buffers, for acting on the topic's project membership:
+
+- `p a` -- **Add** the topic to a board. Lists the repository's open boards and adds the topic to the chosen one (GraphQL `addProjectV2ItemById`).
+- `p s` -- **Set the status** of the topic in a project. If point is on a project line in the `Projects` section, that project is used directly; otherwise you are prompted to pick among the topic's current projects. The project's single-select `Status` options are then offered for completion (GraphQL `updateProjectV2ItemFieldValue`).
+- `p r` -- **Remove** the topic from a project, using the same project-selection process as `p s` (GraphQL `deleteProjectV2Item`), after confirmation.
+
+The mutation commands run synchronously (they react to an explicit keypress), then invalidate the cache and refresh the buffer.
+
+> **Keybinding note:** the `p` prefix shadows magit's `magit-section-backward` (previous section) inside topic buffers, as specified. To free `p`, rebind `forge-plugins-github-projects-prefix-map` to another key in `forge-topic-mode-map` instead.
 
 ### Token scope
 
-Reading Projects v2 requires the `read:project` scope (or `project` for read/write) on the token `forge` uses. A classic token without it will get a permission error from the GraphQL API.
+Reading Projects v2 requires the `read:project` scope on the token `forge` uses; the `p a`/`p s`/`p r` mutations require the `project` scope. A classic token without the needed scope will get a permission error from the GraphQL API.
 
 ### Keybindings
 
@@ -194,6 +206,12 @@ In the board buffer:
 
 - `g` -- Re-fetch and redraw the board.
 
-On a card line:
+On a card line (board buffer) or project line (topic `Projects` section):
 
-- `RET` / `b` -- Open the card in the browser.
+- `RET` / `b` -- Open the card or project in the browser.
+
+In an issue or pull request topic buffer:
+
+- `p a` -- Add the topic to a project.
+- `p s` -- Set the topic's status in a project.
+- `p r` -- Remove the topic from a project.
