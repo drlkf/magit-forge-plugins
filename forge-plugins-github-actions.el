@@ -554,6 +554,13 @@ and UNPAGINATE are as in `forge--rest'."
       (let ((id (alist-get 'id run)))
         (and id (number-to-string id))))))
 
+(defun forge-plugins-github-actions--run-app (run)
+  "Return the GitHub App alist of the check run RUN, or nil.
+The alist carries the app's `id', `slug' and `name', so downstream
+code can identify which app produced RUN via, e.g.,
+\(alist-get \\='slug (forge-plugins-github-actions--run-app run))."
+  (alist-get 'app run))
+
 (defvar-local forge-plugins-github-actions--log-topic nil
   "The topic associated with the current log buffer.")
 

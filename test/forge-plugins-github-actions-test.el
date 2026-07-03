@@ -55,5 +55,17 @@ One success, one skipped and one neutral render `(1/3)' in the success face."
       (should (equal (car summary) "(1/3)"))
       (should (eq (cdr summary) 'forge-plugins-github-actions-success)))))
 
+(ert-deftest forge-plugins-github-actions-test-run-app ()
+  "The app accessor returns the nested app alist, or nil when absent."
+  (let ((run '((name . "build")
+               (app . ((id . 15368)
+                       (slug . "github-actions")
+                       (name . "GitHub Actions"))))))
+    (let ((app (forge-plugins-github-actions--run-app run)))
+      (should (equal (alist-get 'slug app) "github-actions"))
+      (should (equal (alist-get 'name app) "GitHub Actions"))
+      (should (equal (alist-get 'id app) 15368))))
+  (should-not (forge-plugins-github-actions--run-app '((name . "build")))))
+
 (provide 'forge-plugins-github-actions-test)
 ;;; forge-plugins-github-actions-test.el ends here
