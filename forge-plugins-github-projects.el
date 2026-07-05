@@ -59,51 +59,91 @@
 (defvar-local forge-plugins-github-projects--number nil
   "The Projects v2 number displayed in the current buffer.")
 
+;; Projects v2 queries traverse GraphQL unions and interfaces
+;; (`issueOrPullRequest', `fieldValueByName', single-select `field'),
+;; which require inline fragments.  ghub's gsexp encoder cannot express
+;; inline fragments, so these are raw GraphQL strings POSTed to
+;; `/graphql' via `ghub-request' (the same primitive `forge' uses for
+;; REST), rather than gsexp forms passed to `ghub-query'.
+
 (defconst forge-plugins-github-projects--list-query
-  '(query
-    (repository
-     [(owner $owner String!) (name $name String!)]
-     (projectsV2 [(first 50)]
-                 (nodes number title closed (field [(name "Status")]
-                                                   (... on ProjectV2SingleSelectField id))))))
+  "query($owner:String!,$name:String!){
+     repository(owner:$owner,name:$name){
+       projectsV2(first:50){ nodes{ id number title closed } }
+     }
+   }"
   "GraphQL query listing the repository's Projects v2 boards.")
 
 (defconst forge-plugins-github-projects--items-query
-  '(query
-    (repository
-     [(owner $owner String!) (name $name String!)]
-     (projectV2
-      [(number $number Int!)]
-      title url
-      (field [(name "Status")]
-             (... on ProjectV2SingleSelectField
-                  (options id name)))
-      (items
-       [(first 100)]
-       (nodes
-        (fieldValueByName
-         [(name "Status")]
-         (... on ProjectV2ItemFieldSingleSelectValue optionId name))
-        (content
-         (... on Issue       __typename number title url state)
-         (... on PullRequest __typename number title url state)
-         (... on DraftIssue  __typename title)))))))
+  "query($owner:String!,$name:String!,$number:Int!){
+     repository(owner:$owner,name:$name){
+       projectV2(number:$number){
+         title url
+         field(name:\"Status\"){
+           ... on ProjectV2SingleSelectField{ options{ id name } }
+         }
+         items(first:100){
+           nodes{
+             fieldValueByName(name:\"Status\"){
+               ... on ProjectV2ItemFieldSingleSelectValue{ optionId name }
+             }
+             content{
+               ... on Issue{ __typename number title url state }
+               ... on PullRequest{ __typename number title url state }
+               ... on DraftIssue{ __typename title }
+             }
+           }
+         }
+       }
+     }
+   }"
   "GraphQL query fetching one board's items grouped data.")
 
+(defun forge-plugins-github-projects--errors (body)
+  "Return a joined message string for BODY's GraphQL `errors', or nil."
+  (when-let ((errors (alist-get 'errors body)))
+    (mapconcat (lambda (e) (or (alist-get 'message e) "unknown error"))
+               errors "; ")))
+
+(cl-defun forge-plugins-github-projects--graphql
+    (repo query variables &key callback errorback)
+  "POST GraphQL QUERY string with VARIABLES to REPO's GraphQL endpoint.
+VARIABLES is an alist encoded as the JSON variables object.  With no
+CALLBACK, run synchronously and return the response `data', signalling
+a `user-error' on transport or GraphQL errors.  With CALLBACK, run
+asynchronously: CALLBACK gets the `data' object, ERRORBACK a message
+string.  Authentication and host come from REPO, as `forge' does its
+own requests."
+  (let ((payload `((query . ,query) (variables . ,variables))))
+    (if callback
+        (ghub-request "POST" "/graphql" nil
+          :payload payload :auth 'forge :host (oref repo apihost) :forge 'github
+          :callback
+          (lambda (body _headers _status _req)
+            (if-let ((msg (forge-plugins-github-projects--errors body)))
+                (when errorback (funcall errorback msg))
+              (funcall callback (alist-get 'data body))))
+          :errorback
+          (lambda (err _headers _status _req)
+            (when errorback (funcall errorback (format "%S" err)))))
+      (let* ((body (ghub-request "POST" "/graphql" nil
+                     :payload payload :auth 'forge
+                     :host (oref repo apihost) :forge 'github))
+             (msg (forge-plugins-github-projects--errors body)))
+        (when msg
+          (user-error "GitHub GraphQL error: %s" msg))
+        (alist-get 'data body)))))
+
 (defun forge-plugins-github-projects--query (query repo &rest variables)
-  "Run GraphQL QUERY for REPO synchronously, returning the parsed data.
+  "Run GraphQL QUERY string for REPO synchronously, returning the data.
 VARIABLES are extra `:key value' pairs merged with the repository's
-owner and name.  Authentication and host are taken from REPO via
-the forge auth source, exactly as `forge' issues its own requests."
-  (let ((vars (append (list (cons 'owner (oref repo owner))
-                            (cons 'name (oref repo name)))
-                      (cl-loop for (k v) on variables by #'cddr
-                               collect (cons (intern (substring (symbol-name k) 1))
-                                             v)))))
-    (ghub-query query vars
-      :auth 'forge
-      :host (oref repo apihost)
-      :forge 'github)))
+owner and name into the GraphQL variables object."
+  (forge-plugins-github-projects--graphql
+   repo query
+   (append (list (cons 'owner (oref repo owner))
+                 (cons 'name (oref repo name)))
+           (cl-loop for (k v) on variables by #'cddr
+                    collect (cons (intern (substring (symbol-name k) 1)) v)))))
 
 (defun forge-plugins-github-projects--read-repository ()
   "Return the current forge repository or signal a `user-error'."
@@ -229,31 +269,33 @@ Keys are forge topic IDs.  Values are plists:
   `project' (with `id', `number', `title', `url') and the current
   `status' name (or nil).
 - `:fetching': non-nil while a fetch is in progress.
-- `:error': non-nil when the last fetch failed.")
+- `:error': the error message string when the last fetch failed.")
 
-(defconst forge-plugins-github-projects--membership-query
-  '(query
-    (repository
-     [(owner $owner String!) (name $name String!)]
-     (issueOrPullRequest
-      [(number $number Int!)]
-      (... on Issue
-           id
-           (projectItems
-            [(first 20)]
-            (nodes id (project id number title url)
-                   (fieldValueByName
-                    [(name "Status")]
-                    (... on ProjectV2ItemFieldSingleSelectValue name)))))
-      (... on PullRequest
-           id
-           (projectItems
-            [(first 20)]
-            (nodes id (project id number title url)
-                   (fieldValueByName
-                    [(name "Status")]
-                    (... on ProjectV2ItemFieldSingleSelectValue name))))))))
-  "GraphQL query for a topic's Projects v2 membership.")
+(defconst forge-plugins-github-projects--membership-query-template
+  "query($owner:String!,$name:String!,$number:Int!){
+     repository(owner:$owner,name:$name){
+       topic: %s(number:$number){
+         id
+         projectItems(first:20){
+           nodes{
+             id
+             project{ id number title url }
+             fieldValueByName(name:\"Status\"){
+               ... on ProjectV2ItemFieldSingleSelectValue{ name }
+             }
+           }
+         }
+       }
+     }
+   }"
+  "GraphQL query template for a topic's Projects v2 membership.
+The single `%s' is the content field, `issue' or `pullRequest'; it is
+aliased to `topic' so the response shape is uniform.")
+
+(defun forge-plugins-github-projects--membership-query (topic)
+  "Return the membership query string specialized for TOPIC's type."
+  (format forge-plugins-github-projects--membership-query-template
+          (if (forge-issue-p topic) "issue" "pullRequest")))
 
 (defun forge-plugins-github-projects--parse-items (nodes)
   "Turn membership-query NODES into the cached item plists."
@@ -264,9 +306,9 @@ Keys are forge topic IDs.  Values are plists:
            :status (alist-get 'name (alist-get 'fieldValueByName node))))
    nodes))
 
-(defun forge-plugins-github-projects--content (topic-data)
-  "Return the `issueOrPullRequest' alist from membership TOPIC-DATA."
-  (let-alist topic-data .repository.issueOrPullRequest))
+(defun forge-plugins-github-projects--content (data)
+  "Return the aliased `topic' object from membership response DATA."
+  (let-alist data .repository.topic))
 
 (defun forge-plugins-github-projects--refresh-topic-buffers ()
   "Refresh open issue and pull request topic buffers."
@@ -275,33 +317,35 @@ Keys are forge topic IDs.  Values are plists:
       (when (derived-mode-p 'forge-topic-mode)
         (magit-refresh-buffer)))))
 
+(defun forge-plugins-github-projects--membership-plist (data)
+  "Build a cache plist from a membership response DATA object."
+  (let ((content (forge-plugins-github-projects--content data)))
+    (list :content-id (alist-get 'id content)
+          :items (forge-plugins-github-projects--parse-items
+                  (alist-get 'nodes (alist-get 'projectItems content)))
+          :fetching nil)))
+
 (defun forge-plugins-github-projects--fetch-membership (topic)
   "Fetch TOPIC's Projects v2 membership asynchronously and cache it."
-  (let* ((id (oref topic id))
-         (repo (forge-get-repository topic))
-         (number (oref topic number)))
+  (let ((id (oref topic id))
+        (repo (forge-get-repository topic)))
     (puthash id (list :fetching t) forge-plugins-github-projects--items-cache)
-    (ghub-query forge-plugins-github-projects--membership-query
-      (list (cons 'owner (oref repo owner))
-            (cons 'name (oref repo name))
-            (cons 'number number))
-      :auth 'forge :host (oref repo apihost) :forge 'github
-      :callback
-      (lambda (data _headers _status _req)
-        (let ((content (forge-plugins-github-projects--content data)))
-          (puthash id
-                   (list :content-id (alist-get 'id content)
-                         :items (forge-plugins-github-projects--parse-items
-                                 (alist-get 'nodes
-                                            (alist-get 'projectItems content)))
-                         :fetching nil)
-                   forge-plugins-github-projects--items-cache))
-        (forge-plugins-github-projects--refresh-topic-buffers))
-      :errorback
-      (lambda (_err _headers _status _req)
-        (puthash id (list :error t :fetching nil)
-                 forge-plugins-github-projects--items-cache)
-        (forge-plugins-github-projects--refresh-topic-buffers)))))
+    (forge-plugins-github-projects--graphql
+     repo
+     (forge-plugins-github-projects--membership-query topic)
+     (list (cons 'owner (oref repo owner))
+           (cons 'name (oref repo name))
+           (cons 'number (oref topic number)))
+     :callback
+     (lambda (data)
+       (puthash id (forge-plugins-github-projects--membership-plist data)
+                forge-plugins-github-projects--items-cache)
+       (forge-plugins-github-projects--refresh-topic-buffers))
+     :errorback
+     (lambda (msg)
+       (puthash id (list :error msg :fetching nil)
+                forge-plugins-github-projects--items-cache)
+       (forge-plugins-github-projects--refresh-topic-buffers)))))
 
 (defun forge-plugins-github-projects--invalidate (topic)
   "Drop TOPIC's cached membership so the next render re-fetches it."
@@ -340,7 +384,9 @@ off an async fetch and shows a placeholder."
            ((plist-get cached :fetching)
             (insert (propertize "  fetching...\n" 'face 'magit-dimmed)))
            ((plist-get cached :error)
-            (insert (propertize "  error fetching projects\n" 'face 'error)))
+            (insert (propertize
+                     (format "  error: %s\n" (plist-get cached :error))
+                     'face 'error)))
            ((plist-get cached :items)
             (dolist (item (plist-get cached :items))
               (let* ((project (plist-get item :project))
@@ -363,9 +409,9 @@ off an async fetch and shows a placeholder."
 ;;;; Mutations
 
 (defun forge-plugins-github-projects--mutate (mutation repo variables)
-  "Run GraphQL MUTATION for REPO with VARIABLES (an alist), synchronously."
-  (ghub-query mutation variables
-    :auth 'forge :host (oref repo apihost) :forge 'github :synchronous t))
+  "Run GraphQL MUTATION string for REPO with VARIABLES, synchronously.
+Signals a `user-error' on a GraphQL error."
+  (forge-plugins-github-projects--graphql repo mutation variables))
 
 (defun forge-plugins-github-projects--current-topic ()
   "Return the current topic buffer's topic or signal a `user-error'."
@@ -386,18 +432,10 @@ command reacting to a keypress, so a short wait is acceptable."
               (plist-get cached :fetching)
               (plist-get cached :error))
       (let* ((repo (forge-get-repository topic))
-             (data (ghub-query forge-plugins-github-projects--membership-query
-                     (list (cons 'owner (oref repo owner))
-                           (cons 'name (oref repo name))
-                           (cons 'number (oref topic number)))
-                     :auth 'forge :host (oref repo apihost)
-                     :forge 'github :synchronous t))
-             (content (forge-plugins-github-projects--content data)))
-        (setq cached (list :content-id (alist-get 'id content)
-                           :items (forge-plugins-github-projects--parse-items
-                                   (alist-get 'nodes
-                                              (alist-get 'projectItems content)))
-                           :fetching nil))
+             (data (forge-plugins-github-projects--query
+                    (forge-plugins-github-projects--membership-query topic)
+                    repo :number (oref topic number))))
+        (setq cached (forge-plugins-github-projects--membership-plist data))
         (puthash (oref topic id) cached
                  forge-plugins-github-projects--items-cache)))
     cached))
@@ -425,14 +463,17 @@ completion.  Signals a `user-error' when the topic is in no project."
 OPTIONS is an alist of option name to option ID.  Returns nil when the
 project has no single-select Status field."
   (let* ((data (forge-plugins-github-projects--query
-                '(query
-                  (repository
-                   [(owner $owner String!) (name $name String!)]
-                   (projectV2
-                    [(number $number Int!)]
-                    (field [(name "Status")]
-                           (... on ProjectV2SingleSelectField
-                                id (options id name))))))
+                "query($owner:String!,$name:String!,$number:Int!){
+                   repository(owner:$owner,name:$name){
+                     projectV2(number:$number){
+                       field(name:\"Status\"){
+                         ... on ProjectV2SingleSelectField{
+                           id options{ id name }
+                         }
+                       }
+                     }
+                   }
+                 }"
                 repo :number number))
          (field (let-alist data .repository.projectV2.field))
          (id (alist-get 'id field)))
@@ -464,10 +505,9 @@ one.  Bound to \\`p a' in topic buffers."
            (choice (cdr (assoc (completing-read "Add to project: " table nil t)
                                table))))
       (forge-plugins-github-projects--mutate
-       '(mutation
-         (addProjectV2ItemById
-          [(input $input AddProjectV2ItemByIdInput!)]
-          (item id)))
+       "mutation($input:AddProjectV2ItemByIdInput!){
+          addProjectV2ItemById(input:$input){ item{ id } }
+        }"
        repo
        (list (cons 'input (list (cons 'projectId (alist-get 'id choice))
                                 (cons 'contentId content-id)))))
@@ -495,10 +535,9 @@ projects.  Bound to \\`p s' in topic buffers."
                                    "Status: " options nil t)
                                   options))))
       (forge-plugins-github-projects--mutate
-       '(mutation
-         (updateProjectV2ItemFieldValue
-          [(input $input UpdateProjectV2ItemFieldValueInput!)]
-          (projectV2Item id)))
+       "mutation($input:UpdateProjectV2ItemFieldValueInput!){
+          updateProjectV2ItemFieldValue(input:$input){ projectV2Item{ id } }
+        }"
        repo
        (list (cons 'input
                    (list (cons 'projectId (alist-get 'id project))
@@ -524,10 +563,9 @@ projects.  Bound to \\`p r' in topic buffers."
     (when (yes-or-no-p (format "Remove this topic from project %s? "
                                (alist-get 'title project)))
       (forge-plugins-github-projects--mutate
-       '(mutation
-         (deleteProjectV2Item
-          [(input $input DeleteProjectV2ItemInput!)]
-          (deletedItemId)))
+       "mutation($input:DeleteProjectV2ItemInput!){
+          deleteProjectV2Item(input:$input){ deletedItemId }
+        }"
        repo
        (list (cons 'input (list (cons 'projectId (alist-get 'id project))
                                 (cons 'itemId (plist-get item :id))))))

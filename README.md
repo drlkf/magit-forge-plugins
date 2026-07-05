@@ -176,7 +176,7 @@ Read-only viewer for [GitHub Projects v2](https://docs.github.com/en/issues/plan
 
 Run `M-x forge-plugins-github-projects` from any buffer associated with a GitHub forge repository. It lists the repository's open Projects v2 boards; if there is more than one, you are prompted to pick. The selected board opens in a dedicated `forge-plugins-github-projects-mode` buffer where items are grouped into columns by the board's single-select `Status` field (the field that drives the board columns), in the board's own column order, with a trailing `No Status` bucket for items that have no status value. Each column is a collapsible `magit` section (with `TAB`) whose heading shows the column name and card count. Each card line shows the item's type (`Issue`, `PullRequest` or `DraftIssue`), its number and its title; closed and merged items are dimmed.
 
-Queries go through `ghub-query` — the GraphQL entry point of `ghub`, the same library `forge` uses — authenticated with `:auth 'forge`, so the repository's existing token and host are reused.
+Queries and mutations are raw GraphQL POSTed to the `/graphql` endpoint via `ghub-request` (the same primitive `forge` uses), authenticated with `:auth 'forge`, so the repository's existing token and host are reused. Raw GraphQL is required because Projects v2 queries traverse unions and interfaces (`issueOrPullRequest`, `fieldValueByName`, the single-select `Status` field), which need inline fragments that `ghub`'s gsexp query builder cannot express.
 
 **Flag:** `forge-plugins-github-projects-enable` (default `nil`)
 

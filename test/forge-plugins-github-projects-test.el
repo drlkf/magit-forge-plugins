@@ -34,6 +34,19 @@
   (should (commandp 'forge-plugins-github-projects-remove))
   (should (keymapp forge-plugins-github-projects-prefix-map)))
 
+(ert-deftest forge-plugins-github-projects-test-queries-are-strings ()
+  "Queries must be raw GraphQL strings, not gsexp lists.
+`ghub' gsexp cannot express the inline fragments these queries need, so
+sending them as gsexp produces malformed GraphQL that GitHub rejects."
+  (should (stringp forge-plugins-github-projects--list-query))
+  (should (stringp forge-plugins-github-projects--items-query))
+  (should (stringp forge-plugins-github-projects--membership-query-template))
+  ;; The membership template carries the inline fragment that broke gsexp.
+  (should (string-match-p "\\.\\.\\. on ProjectV2ItemFieldSingleSelectValue"
+                          forge-plugins-github-projects--membership-query-template))
+  (should (string-match-p "pullRequest"
+                          (forge-plugins-github-projects--membership-query nil))))
+
 (ert-deftest forge-plugins-github-projects-test-disabled-by-default ()
   "The plugin flag defaults to nil and its command refuses when off."
   (let ((forge-plugins-github-projects-enable nil))
