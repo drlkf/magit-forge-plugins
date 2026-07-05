@@ -16,7 +16,7 @@
 (ert-deftest forge-plugins-github-projects-test-api-surface ()
   "The forge and ghub symbols and slots the plugin relies on must exist."
   (should (fboundp 'forge-get-repository))
-  (should (fboundp 'ghub-query))
+  (should (fboundp 'ghub-request))
   (should (fboundp 'forge-insert-post))
   (should (boundp 'forge-topic-mode-map))
   (dolist (slot '(owner name apihost))
@@ -46,6 +46,35 @@ sending them as gsexp produces malformed GraphQL that GitHub rejects."
                           forge-plugins-github-projects--membership-query-template))
   (should (string-match-p "pullRequest"
                           (forge-plugins-github-projects--membership-query nil))))
+
+(ert-deftest forge-plugins-github-projects-test-membership-extraction ()
+  "Membership response extraction must match the query's response shape.
+Feeds a hand-written response `data' object (as `--graphql' returns it)
+through the extraction helpers and asserts the resulting cache plist,
+so a wrong `alist-get'/`let-alist' path fails the build."
+  (let* ((data '((repository
+                  (topic
+                   (id . "PR_node")
+                   (projectItems
+                    (nodes
+                     ((id . "ITEM_1")
+                      (project (id . "PVT_1") (number . 3)
+                               (title . "Roadmap") (url . "https://x/1"))
+                      (fieldValueByName (name . "In Progress")))
+                     ((id . "ITEM_2")
+                      (project (id . "PVT_2") (number . 7)
+                               (title . "Backlog") (url . "https://x/2"))
+                      (fieldValueByName))))))))
+         (plist (forge-plugins-github-projects--membership-plist data))
+         (items (plist-get plist :items)))
+    (should (equal (plist-get plist :content-id) "PR_node"))
+    (should (length= items 2))
+    (should (equal (plist-get (car items) :id) "ITEM_1"))
+    (should (equal (plist-get (car items) :status) "In Progress"))
+    (should (equal (alist-get 'title (plist-get (car items) :project))
+                   "Roadmap"))
+    ;; A project with no Status value yields a nil `:status'.
+    (should (null (plist-get (cadr items) :status)))))
 
 (ert-deftest forge-plugins-github-projects-test-disabled-by-default ()
   "The plugin flag defaults to nil and its command refuses when off."

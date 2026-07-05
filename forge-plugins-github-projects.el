@@ -26,17 +26,25 @@
 ;; classic REST Projects API was sunset on 2025-04-01); see
 ;; https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects.
 ;;
-;; This plugin adds a read-only viewer.  `forge-plugins-github-projects'
-;; lists the Projects v2 boards attached to the current forge
-;; repository; selecting one opens a buffer that groups the board's
-;; items into columns by its single-select "Status" field (the field
-;; that drives the board columns) and renders each column as a
-;; collapsible `magit' section.  Cards show their type, number and
-;; title; `RET' or `b' on a card opens it in the browser.
+;; This plugin adds a board viewer and topic integration.
+;; `forge-plugins-github-projects' lists the Projects v2 boards attached
+;; to the current forge repository; selecting one opens a read-only
+;; buffer that groups the board's items into columns by its
+;; single-select "Status" field (the field that drives the board
+;; columns) and renders each column as a collapsible `magit' section.
+;; Cards show their type, number and title; `RET' or `b' on a card opens
+;; it in the browser.
 ;;
-;; Queries go through `ghub-query' (the GraphQL entry point of `ghub',
-;; the library `forge' itself uses) with `:auth 'forge', reusing the
-;; repository's existing token and host.  Nothing is mutated.
+;; In issue and pull request topic buffers, a "Projects" section lists
+;; the boards the topic belongs to and its status on each, and a `p'
+;; prefix keymap adds the topic to a board (`p a'), sets its status
+;; (`p s') or removes it (`p r').
+;;
+;; All GraphQL is sent as raw query/mutation strings POSTed to
+;; `/graphql' via `ghub-request' with `:auth 'forge', reusing the
+;; repository's existing token and host.  Raw strings are required
+;; because Projects v2 traverses unions and interfaces, which need
+;; inline fragments that `ghub''s gsexp query builder cannot express.
 
 ;;; Code:
 
@@ -56,8 +64,8 @@
 (defvar-local forge-plugins-github-projects--repo nil
   "The forge repository whose board the current buffer displays.")
 
-(defvar-local forge-plugins-github-projects--number nil
-  "The Projects v2 number displayed in the current buffer.")
+(defvar-local forge-plugins-github-projects--project-id nil
+  "The ProjectV2 node ID displayed in the current buffer.")
 
 ;; Projects v2 queries traverse GraphQL unions and interfaces
 ;; (`issueOrPullRequest', `fieldValueByName', single-select `field'),
@@ -75,9 +83,9 @@
   "GraphQL query listing the repository's Projects v2 boards.")
 
 (defconst forge-plugins-github-projects--items-query
-  "query($owner:String!,$name:String!,$number:Int!){
-     repository(owner:$owner,name:$name){
-       projectV2(number:$number){
+  "query($id:ID!){
+     node(id:$id){
+       ... on ProjectV2{
          title url
          field(name:\"Status\"){
            ... on ProjectV2SingleSelectField{ options{ id name } }
@@ -97,7 +105,10 @@
        }
      }
    }"
-  "GraphQL query fetching one board's items grouped data.")
+  "GraphQL query fetching one board's items grouped data.
+The board is resolved by its ProjectV2 node ID via the `node' root
+field: a project's number is scoped to its owning org or user, so a
+repo-linked org project does not resolve under `repository.projectV2'.")
 
 (defun forge-plugins-github-projects--errors (body)
   "Return a joined message string for BODY's GraphQL `errors', or nil."
@@ -180,7 +191,7 @@ owner and name into the GraphQL variables object."
   "Re-fetch and redraw the board in the current buffer."
   (forge-plugins-github-projects--render
    forge-plugins-github-projects--repo
-   forge-plugins-github-projects--number))
+   forge-plugins-github-projects--project-id))
 
 (defun forge-plugins-github-projects--card-face (state)
   "Return the face for a card whose item STATE is given (may be nil)."
@@ -212,12 +223,13 @@ owner and name into the GraphQL variables object."
      (list 'forge-plugins-github-projects-url url
            'keymap forge-plugins-github-projects-card-map))))
 
-(defun forge-plugins-github-projects--render (repo number)
-  "Render the Projects v2 board NUMBER of REPO into the current buffer."
-  (let* ((data (forge-plugins-github-projects--query
-                forge-plugins-github-projects--items-query repo
-                :number number))
-         (project (let-alist data .repository.projectV2))
+(defun forge-plugins-github-projects--render (repo project-id)
+  "Render the Projects v2 board PROJECT-ID (a node ID) of REPO.
+Draws into the current buffer."
+  (let* ((data (forge-plugins-github-projects--graphql
+                repo forge-plugins-github-projects--items-query
+                (list (cons 'id project-id))))
+         (project (let-alist data .node))
          ;; `options' on a single-select field is a plain list, not a
          ;; Relay connection, so it has no `nodes' wrapper.
          (options (alist-get 'options (alist-get 'field project)))
@@ -225,7 +237,7 @@ owner and name into the GraphQL variables object."
          (inhibit-read-only t))
     (erase-buffer)
     (setq forge-plugins-github-projects--repo repo
-          forge-plugins-github-projects--number number)
+          forge-plugins-github-projects--project-id project-id)
     (magit-insert-section (forge-plugins-github-projects-board)
       (insert (magit--propertize-face (or (alist-get 'title project) "Project")
                                       'magit-section-heading))
@@ -425,9 +437,10 @@ command reacting to a keypress, so a short wait is acceptable."
   (let ((cached (gethash (oref topic id)
                          forge-plugins-github-projects--items-cache)))
     ;; Re-fetch on a miss, an in-flight async fetch, or a prior error
-    ;; (so a transient failure does not poison the cache).  This
-    ;; ghub-query is not `:noerror', so a permission error signals and
-    ;; propagates to the interactive command with its real message.
+    ;; (so a transient failure does not poison the cache).  The
+    ;; synchronous `--graphql' path signals a `user-error' on a GraphQL
+    ;; error, so a permission failure propagates to the interactive
+    ;; command with its real message rather than caching as "no projects".
     (when (or (null cached)
               (plist-get cached :fetching)
               (plist-get cached :error))
@@ -452,20 +465,30 @@ completion.  Signals a `user-error' when the topic is in no project."
           (user-error "This topic is in no project"))
         (if (length= items 1)
             (car items)
-          (let ((table (mapcar (lambda (it)
-                                 (cons (alist-get 'title (plist-get it :project))
-                                       it))
-                               items)))
+          (let ((table (mapcar
+                        (lambda (it)
+                          (let ((project (plist-get it :project)))
+                            (cons (format "#%s  %s"
+                                          (alist-get 'number project)
+                                          (alist-get 'title project))
+                                  it)))
+                        items)))
             (cdr (assoc (completing-read prompt table nil t) table)))))))
 
-(defun forge-plugins-github-projects--status-field (repo number)
-  "Return (FIELD-ID . OPTIONS) for project NUMBER's Status field in REPO.
-OPTIONS is an alist of option name to option ID.  Returns nil when the
-project has no single-select Status field."
-  (let* ((data (forge-plugins-github-projects--query
-                "query($owner:String!,$name:String!,$number:Int!){
-                   repository(owner:$owner,name:$name){
-                     projectV2(number:$number){
+(defun forge-plugins-github-projects--status-field (repo project-id)
+  "Return (FIELD-ID . OPTIONS) for the Status field of project PROJECT-ID.
+The query is issued against REPO's GraphQL endpoint.  PROJECT-ID is the
+ProjectV2 GraphQL node ID.  OPTIONS is an alist of
+option name to option ID.  Returns nil when the project has no
+single-select Status field.  The project is resolved by node ID via
+the `node' root field, not by number under the repository: a project's
+number is scoped to its owning organization or user, so a repo-linked
+org project does not resolve under `repository.projectV2'."
+  (let* ((data (forge-plugins-github-projects--graphql
+                repo
+                "query($id:ID!){
+                   node(id:$id){
+                     ... on ProjectV2{
                        field(name:\"Status\"){
                          ... on ProjectV2SingleSelectField{
                            id options{ id name }
@@ -474,8 +497,8 @@ project has no single-select Status field."
                      }
                    }
                  }"
-                repo :number number))
-         (field (let-alist data .repository.projectV2.field))
+                (list (cons 'id project-id))))
+         (field (let-alist data .node.field))
          (id (alist-get 'id field)))
     (when id
       (cons id
@@ -498,10 +521,17 @@ one.  Bound to \\`p a' in topic buffers."
          (projects (seq-remove
                     (lambda (p) (eq (alist-get 'closed p) t))
                     (let-alist data .repository.projectsV2.nodes))))
+    (unless content-id
+      (user-error "Topic has no GraphQL node id; run `forge-pull' first"))
     (unless projects
       (user-error "No open Projects v2 boards on %s/%s"
                   (oref repo owner) (oref repo name)))
-    (let* ((table (mapcar (lambda (p) (cons (alist-get 'title p) p)) projects))
+    (let* ((table (mapcar (lambda (p)
+                            (cons (format "#%s  %s"
+                                          (alist-get 'number p)
+                                          (alist-get 'title p))
+                                  p))
+                          projects))
            (choice (cdr (assoc (completing-read "Add to project: " table nil t)
                                table))))
       (forge-plugins-github-projects--mutate
@@ -527,7 +557,7 @@ projects.  Bound to \\`p s' in topic buffers."
                 topic "Set status in project: "))
          (project (plist-get item :project))
          (field (forge-plugins-github-projects--status-field
-                 repo (alist-get 'number project))))
+                 repo (alist-get 'id project))))
     (unless field
       (user-error "Project %s has no Status field" (alist-get 'title project)))
     (let* ((options (cdr field))
@@ -610,13 +640,13 @@ for which to open.  Requires the plugin to be enabled."
                                     projects))
                      (key (completing-read "Project: " table nil t)))
                 (cdr (assoc key table)))))
-           (number (alist-get 'number choice))
            (buffer (get-buffer-create
                     (format "*forge-project: %s/%s #%s*"
-                            (oref repo owner) (oref repo name) number))))
+                            (oref repo owner) (oref repo name)
+                            (alist-get 'number choice)))))
       (with-current-buffer buffer
         (forge-plugins-github-projects-mode)
-        (forge-plugins-github-projects--render repo number))
+        (forge-plugins-github-projects--render repo (alist-get 'id choice)))
       (pop-to-buffer buffer))))
 
 ;;;###autoload
