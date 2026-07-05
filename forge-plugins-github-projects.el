@@ -227,9 +227,9 @@ owner and name into the GraphQL variables object."
     (setq forge-plugins-github-projects--repo repo
           forge-plugins-github-projects--number number)
     (magit-insert-section (forge-plugins-github-projects-board)
-      (magit-insert-heading
-        (propertize (or (alist-get 'title project) "Project")
-                    'face 'magit-section-heading))
+      (insert (magit--propertize-face (or (alist-get 'title project) "Project")
+                                      'magit-section-heading))
+      (magit-insert-heading)
       ;; One column per Status option, in the board's own order, plus a
       ;; trailing "No Status" bucket for items without a status value.
       (let ((buckets (make-hash-table :test 'equal)))
@@ -377,8 +377,8 @@ off an async fetch and shows a placeholder."
         (setq cached (gethash (oref topic id)
                               forge-plugins-github-projects--items-cache)))
       (magit-insert-section (forge-plugins-github-projects-topic)
-        (magit-insert-heading
-          (propertize "Projects" 'face 'magit-section-heading))
+        (insert (magit--propertize-face "Projects" 'magit-section-heading))
+        (magit-insert-heading)
         (magit-insert-section-body
           (cond
            ((plist-get cached :fetching)
