@@ -42,5 +42,16 @@
           (goto-char (point-min))
           (should-not (re-search-forward "<1/2>.*<1/2>" nil t)))))))
 
+(ert-deftest forge-plugins-pullreq-approvals-test-clear-queue ()
+  "Clearing the queue empties it, cancels the timer and zeroes in-flight."
+  (let ((forge-plugins-pullreq-approvals--queue (list 'a 'b))
+        (forge-plugins-pullreq-approvals--inflight 2)
+        (forge-plugins-pullreq-approvals--dispatch-timer
+         (run-with-timer 100 nil #'ignore)))
+    (forge-plugins-pullreq-approvals-clear-queue)
+    (should-not forge-plugins-pullreq-approvals--queue)
+    (should (= forge-plugins-pullreq-approvals--inflight 0))
+    (should-not forge-plugins-pullreq-approvals--dispatch-timer)))
+
 (provide 'forge-plugins-pullreq-approvals-test)
 ;;; forge-plugins-pullreq-approvals-test.el ends here

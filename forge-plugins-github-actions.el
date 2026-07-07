@@ -1000,6 +1000,21 @@ request.  Return the number of pull requests invalidated."
         (funcall walk magit-root-section)))
     count))
 
+(defun forge-plugins-github-actions-clear-queue ()
+  "Clear the pending check-run fetch queue and reset dispatch state.
+Cancel any scheduled dispatch timer, empty the queue and reset the
+in-flight counter.  Use this to recover if fetches ever get stuck."
+  (interactive)
+  (when (timerp forge-plugins-github-actions--dispatch-timer)
+    (cancel-timer forge-plugins-github-actions--dispatch-timer))
+  (let ((n (length forge-plugins-github-actions--queue)))
+    (setq forge-plugins-github-actions--dispatch-timer nil
+          forge-plugins-github-actions--queue nil
+          forge-plugins-github-actions--inflight 0)
+    (forge-plugins-github-actions--debug "Cleared fetch queue (%d pending)" n)
+    (when (called-interactively-p 'interactive)
+      (message "Cleared %d pending GitHub Actions fetch(es)" n))))
+
 (defun forge-plugins-github-actions-refresh ()
   "Refresh the GitHub Actions status in the current buffer.
 Invalidate the cached check-run results for the relevant pull
@@ -1062,6 +1077,7 @@ request currently displayed."
   "Disable GitHub Actions status integration."
   (interactive)
   (setq forge-plugins-github-actions-enable nil)
+  (forge-plugins-github-actions-clear-queue)
   (advice-remove 'forge-insert-post
                  #'forge-plugins-github-actions--insert-commits-actions)
   (advice-remove 'forge--insert-topic

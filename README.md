@@ -110,6 +110,8 @@ In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mod
 
 - `C-c C-a` -- Refresh the GitHub Actions status, forcing a fresh fetch from the forge. In a pull request buffer this refreshes that pull request; in a status buffer it refreshes every GitHub pull request currently displayed. Unlike magit's `g` (`magit-refresh`), which reuses the cached status as long as the head revision is unchanged, this bypasses the cache and re-fetches the check runs.
 
+The command `forge-plugins-github-actions-clear-queue` (no default keybinding, run via `M-x`) empties the pending check-run fetch queue and resets the dispatch state, to recover if fetches ever get stuck. It also runs automatically when the plugin is disabled.
+
 When viewing the logs inside Emacs, the following keybindings are available:
 
 - `B` -- Open the action's logs in your browser.
@@ -169,6 +171,8 @@ update progressively without ever re-rendering the whole buffer.
 In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mode`, the following keybinding is available buffer-wide:
 
 - `C-c C-v` -- Refresh the pull request approvals, forcing a fresh fetch from the forge. In a pull request buffer this refreshes that pull request; in a status buffer it refreshes every GitHub pull request currently displayed. Approvals can change without a new push (the head revision is unchanged), in which case magit's `g` (`magit-refresh`) reuses the cached status; this command bypasses the cache and re-fetches the reviews and branch rules.
+
+The command `forge-plugins-pullreq-approvals-clear-queue` (no default keybinding, run via `M-x`) empties the pending approvals fetch queue and resets the dispatch state, to recover if fetches ever get stuck. It also runs automatically when the plugin is disabled.
 
 ## GitHub Projects
 

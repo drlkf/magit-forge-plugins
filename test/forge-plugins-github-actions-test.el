@@ -67,5 +67,16 @@ One success, one skipped and one neutral render `(1/3)' in the success face."
       (should (equal (alist-get 'id app) 15368))))
   (should-not (forge-plugins-github-actions--run-app '((name . "build")))))
 
+(ert-deftest forge-plugins-github-actions-test-clear-queue ()
+  "Clearing the queue empties it, cancels the timer and zeroes in-flight."
+  (let ((forge-plugins-github-actions--queue (list 'a 'b))
+        (forge-plugins-github-actions--inflight 2)
+        (forge-plugins-github-actions--dispatch-timer
+         (run-with-timer 100 nil #'ignore)))
+    (forge-plugins-github-actions-clear-queue)
+    (should-not forge-plugins-github-actions--queue)
+    (should (= forge-plugins-github-actions--inflight 0))
+    (should-not forge-plugins-github-actions--dispatch-timer)))
+
 (provide 'forge-plugins-github-actions-test)
 ;;; forge-plugins-github-actions-test.el ends here

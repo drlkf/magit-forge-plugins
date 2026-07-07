@@ -456,7 +456,7 @@ result has the `<x/y>' indicator appended for GitHub pull requests."
       line)))
 
 (defun forge-plugins-pullreq-approvals--insert-topic (orig-fun topic
-                                                              &optional width)
+                                                               &optional width)
   "Around advice to promote the approvals badge to a highlight-proof overlay.
 ORIG-FUN is `forge--insert-topic', called with TOPIC and WIDTH; the
 indicator appended by `forge-plugins-pullreq-approvals--format-topic-line'
@@ -539,6 +539,21 @@ Return the number of pull requests invalidated."
         (funcall walk magit-root-section)))
     count))
 
+(defun forge-plugins-pullreq-approvals-clear-queue ()
+  "Clear the pending approvals fetch queue and reset dispatch state.
+Cancel any scheduled dispatch timer, empty the queue and reset the
+in-flight counter.  Use this to recover if fetches ever get stuck."
+  (interactive)
+  (when (timerp forge-plugins-pullreq-approvals--dispatch-timer)
+    (cancel-timer forge-plugins-pullreq-approvals--dispatch-timer))
+  (let ((n (length forge-plugins-pullreq-approvals--queue)))
+    (setq forge-plugins-pullreq-approvals--dispatch-timer nil
+          forge-plugins-pullreq-approvals--queue nil
+          forge-plugins-pullreq-approvals--inflight 0)
+    (forge-plugins-pullreq-approvals--debug "Cleared fetch queue (%d pending)" n)
+    (when (called-interactively-p 'interactive)
+      (message "Cleared %d pending approvals fetch(es)" n))))
+
 (defun forge-plugins-pullreq-approvals-refresh ()
   "Refresh the pull request approvals in the current buffer.
 Invalidate the cached approvals for the relevant pull request(s)
@@ -589,6 +604,7 @@ request currently displayed."
   "Disable pull request approvals integration."
   (interactive)
   (setq forge-plugins-pullreq-approvals-enable nil)
+  (forge-plugins-pullreq-approvals-clear-queue)
   (advice-remove 'forge-insert-post
                  #'forge-plugins-pullreq-approvals--insert-section)
   (advice-remove 'forge--insert-topic
