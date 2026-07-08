@@ -582,18 +582,64 @@ code can identify which app produced RUN via, e.g.,
   "Revert function to refresh the GitHub Action logs."
   (forge-plugins-github-actions--log-fetch-and-display t))
 
+(defun forge-plugins-github-actions-log-retry ()
+  "Re-run the GitHub Action check run at point or shown in the log buffer.
+In a log buffer, retries the run the buffer displays.  On an action
+section line in any magit or forge buffer, retries that run."
+  (interactive)
+  (let* ((in-log (derived-mode-p 'forge-plugins-github-actions-log-mode))
+         (run (if in-log
+                  forge-plugins-github-actions--log-run
+                (forge-plugins-github-actions--run-at-point)))
+         (topic (if in-log
+                    forge-plugins-github-actions--log-topic
+                  forge-buffer-topic))
+         (repo (forge-get-repository topic))
+         (owner (oref repo owner))
+         (name (oref repo name))
+         (run-id (alist-get 'id run))
+         (run-name (alist-get 'name run))
+         (url (format "/repos/%s/%s/check-runs/%s/rerequest" owner name run-id)))
+    (message "Requesting re-run of %s..." run-name)
+    (forge-plugins-github-actions--debug
+     "Requesting re-run of check run %s (ID: %s)" run-name run-id)
+    (forge-rest topic "POST" url nil
+      :callback
+      (lambda (&rest _)
+        (message "Re-run of %s requested successfully" run-name)
+        (forge-plugins-github-actions--debug
+         "Successfully requested re-run of check run %s" run-name)
+        (let* ((id (oref topic id))
+               (cached (gethash id forge-plugins-github-actions--cache)))
+          (when cached
+            (puthash id
+                     (plist-put cached :fetching t)
+                     forge-plugins-github-actions--cache)
+            (forge-plugins-github-actions--update-topic-line topic)
+            (forge-plugins-github-actions--schedule-refresh)))
+        (run-with-timer
+         2 nil #'forge-plugins-github-actions--enqueue topic))
+      :errorback
+      (lambda (err &rest _)
+        (let ((msg (or (alist-get 'message err) "Unknown error")))
+          (message "Failed to re-run %s: %s" run-name msg)
+          (forge-plugins-github-actions--debug
+           "Failed to request re-run of check run %s: %S" run-name err))))))
+
 (transient-define-prefix forge-plugins-github-actions-log-help ()
   "Show available keys in the GitHub Action log buffer."
   ["Actions"
    ("B" "Browse run in browser" forge-plugins-github-actions-log-browse-url)
-   ("r" "Refresh logs"          revert-buffer)])
+   ("r" "Refresh logs"          revert-buffer)
+   ("t" "Retry run"             forge-plugins-github-actions-log-retry)])
 
 (defvar-keymap forge-plugins-github-actions-log-mode-map
   :doc "Keymap for `forge-plugins-github-actions-log-mode'."
   :parent magit-section-mode-map
   "?" #'forge-plugins-github-actions-log-help
   "B" #'forge-plugins-github-actions-log-browse-url
-  "r" #'revert-buffer)
+  "r" #'revert-buffer
+  "t" #'forge-plugins-github-actions-log-retry)
 
 ;; Under `evil', the log buffer inherits `special-mode''s motion state, where
 ;; `B' and `r' would otherwise be shadowed by the global motion/normal maps.
@@ -603,6 +649,7 @@ code can identify which app produced RUN via, e.g.,
     "?" #'forge-plugins-github-actions-log-help
     "B" #'forge-plugins-github-actions-log-browse-url
     "r" #'revert-buffer
+    "t" #'forge-plugins-github-actions-log-retry
     "q" #'quit-window))
 
 (define-derived-mode forge-plugins-github-actions-log-mode magit-section-mode "GH-Action-Log"
@@ -946,42 +993,10 @@ into one collapsible section per step, matching GitHub's web UI."
         (browse-url url)
       (user-error "No URL found for this action"))))
 
-(defun forge-plugins-github-actions-rerun ()
-  "Re-run the GitHub Action under point."
-  (interactive)
-  (let* ((run (forge-plugins-github-actions--run-at-point))
-         (topic forge-buffer-topic)
-         (repo (forge-get-repository topic))
-         (owner (oref repo owner))
-         (name (oref repo name))
-         (run-id (alist-get 'id run))
-         (run-name (alist-get 'name run))
-         (url (format "/repos/%s/%s/check-runs/%s/rerequest" owner name run-id)))
-    (message "Requesting re-run of %s..." run-name)
-    (forge-plugins-github-actions--debug
-     "Requesting re-run of check run %s (ID: %s)" run-name run-id)
-    (forge-rest topic "POST" url nil
-      :callback
-      (lambda (&rest _)
-        (message "Re-run of %s requested successfully" run-name)
-        (forge-plugins-github-actions--debug
-         "Successfully requested re-run of check run %s" run-name)
-        (let* ((id (oref topic id))
-               (cached (gethash id forge-plugins-github-actions--cache)))
-          (when cached
-            (puthash id
-                     (plist-put cached :fetching t)
-                     forge-plugins-github-actions--cache)
-            (forge-plugins-github-actions--update-topic-line topic)
-            (forge-plugins-github-actions--schedule-refresh)))
-        (run-with-timer
-         2 nil #'forge-plugins-github-actions--enqueue topic))
-      :errorback
-      (lambda (err &rest _)
-        (let ((msg (or (alist-get 'message err) "Unknown error")))
-          (message "Failed to re-run %s: %s" run-name msg)
-          (forge-plugins-github-actions--debug
-           "Failed to request re-run of check run %s: %S" run-name err))))))
+(defalias 'forge-plugins-github-actions-rerun
+  #'forge-plugins-github-actions-log-retry
+  "Re-run the GitHub Action under point.
+Alias for `forge-plugins-github-actions-log-retry'.")
 
 (defun forge-plugins-github-actions--invalidate (topic)
   "Drop the cached GitHub Actions status for TOPIC, forcing a refetch.
