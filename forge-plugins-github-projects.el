@@ -52,6 +52,7 @@
 (require 'forge-topic nil t)
 (require 'ghub)
 (require 'magit-section)
+(require 'transient)
 (require 'cl-lib)
 
 (declare-function forge-get-repository "forge-core")
@@ -174,9 +175,15 @@ owner and name into the GraphQL variables object."
       (browse-url url)
     (user-error "No URL for this card")))
 
+(transient-define-prefix forge-plugins-github-projects-help ()
+  "Show available keys in the GitHub Projects board buffer."
+  ["Actions"
+   ("g" "Refresh board" revert-buffer)])
+
 (defvar-keymap forge-plugins-github-projects-mode-map
   :doc "Keymap for `forge-plugins-github-projects-mode'."
   :parent magit-section-mode-map
+  "?" #'forge-plugins-github-projects-help
   "g" #'revert-buffer)
 
 (define-derived-mode forge-plugins-github-projects-mode magit-section-mode

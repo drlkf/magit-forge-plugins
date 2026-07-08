@@ -33,6 +33,7 @@
 (require 'ansi-color)
 (require 'cl-lib)
 (require 'package)
+(require 'transient)
 
 (declare-function evil-define-key* "evil-core")
 
@@ -581,9 +582,16 @@ code can identify which app produced RUN via, e.g.,
   "Revert function to refresh the GitHub Action logs."
   (forge-plugins-github-actions--log-fetch-and-display t))
 
+(transient-define-prefix forge-plugins-github-actions-log-help ()
+  "Show available keys in the GitHub Action log buffer."
+  ["Actions"
+   ("B" "Browse run in browser" forge-plugins-github-actions-log-browse-url)
+   ("r" "Refresh logs"          revert-buffer)])
+
 (defvar-keymap forge-plugins-github-actions-log-mode-map
   :doc "Keymap for `forge-plugins-github-actions-log-mode'."
   :parent magit-section-mode-map
+  "?" #'forge-plugins-github-actions-log-help
   "B" #'forge-plugins-github-actions-log-browse-url
   "r" #'revert-buffer)
 
@@ -592,6 +600,7 @@ code can identify which app produced RUN via, e.g.,
 ;; Bind them in those states so they win.
 (with-eval-after-load 'evil
   (evil-define-key* '(motion normal) forge-plugins-github-actions-log-mode-map
+    "?" #'forge-plugins-github-actions-log-help
     "B" #'forge-plugins-github-actions-log-browse-url
     "r" #'revert-buffer
     "q" #'quit-window))
