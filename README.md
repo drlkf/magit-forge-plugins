@@ -92,11 +92,16 @@ and dispatched as in-flight requests complete, so status for many pull
 requests is fetched in parallel without blocking Emacs or hammering the
 GitHub API.
 
-- `forge-plugins-github-actions-refresh-delay` -- Delay in seconds (default
-`0.3`) before refreshing pull request buffers after a fetch completes. As
-each fetch completes, the per-topic status badge is patched in place in
-topic-list buffers (Magit status, forge topics, notifications), so those
-update progressively without ever re-rendering the whole buffer.
+- `forge-plugins-github-actions-refresh-delay` -- Throttle window in seconds
+(default `0.3`) for applying fetched results to buffers. In topic-list
+buffers (Magit status, forge topics, notifications) the per-topic status
+badges are patched in place; every completion landing within one window is
+applied in a single section-tree walk and redisplay, so a burst of fetches
+on a large topic list is coalesced instead of triggering one update per
+result. Pull request topic buffers, which carry the full Actions section,
+are refreshed via `magit-refresh` the same way. Lower the value to update
+more eagerly, raise it to coalesce more aggressively. This keeps Emacs
+responsive on repositories with many topics.
 
 ### Keybindings
 
@@ -160,11 +165,16 @@ of approvals fetches to run concurrently (default `6`). Fetches are queued and
 dispatched as in-flight requests complete, so status for many pull requests is
 fetched in parallel without blocking Emacs or hammering the GitHub API.
 
-- `forge-plugins-pullreq-approvals-refresh-delay` -- Delay in seconds (default
-`0.3`) before refreshing pull request buffers after a fetch completes. As
-each fetch completes, the per-topic approvals badge is patched in place in
-topic-list buffers (Magit status, forge topics, notifications), so those
-update progressively without ever re-rendering the whole buffer.
+- `forge-plugins-pullreq-approvals-refresh-delay` -- Throttle window in
+seconds (default `0.3`) for applying fetched approvals to buffers. In
+topic-list buffers (Magit status, forge topics, notifications) the
+per-topic approvals badges are patched in place; every completion landing
+within one window is applied in a single section-tree walk and redisplay,
+so a burst of fetches on a large topic list is coalesced instead of
+triggering one update per result. Pull request topic buffers, which carry
+the full Approvals section, are refreshed via `magit-refresh` the same way.
+Lower the value to update more eagerly, raise it to coalesce more
+aggressively. This keeps Emacs responsive on repositories with many topics.
 
 ### Keybindings
 

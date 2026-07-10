@@ -26,7 +26,7 @@
   (let* ((topic (forge-pullreq :id "T1" :head-rev "abc"))
          (forge-plugins-github-actions--cache (make-hash-table :test 'equal)))
     (puthash "T1" (list :head-rev "abc" :total 2 :success 1 :failure 0
-                        :skipped 0 :completed 2 :fetching nil)
+                        :skipped 0 :fetching nil)
              forge-plugins-github-actions--cache)
     (with-temp-buffer
       (insert "topic line\n")
@@ -42,6 +42,42 @@
           (should (equal (buffer-string) after-first))
           (goto-char (point-min))
           (should-not (re-search-forward "(1/2).*(1/2)" nil t)))))))
+
+(ert-deftest forge-plugins-github-actions-test-flush-batches ()
+  "A single flush patches every pending topic in one tree walk."
+  (let* ((t1 (forge-pullreq :id "T1" :head-rev "a"))
+         (t2 (forge-pullreq :id "T2" :head-rev "b"))
+         (forge-plugins-github-actions--cache (make-hash-table :test 'equal))
+         (forge-plugins-github-actions--pending (make-hash-table :test 'equal))
+         (forge-plugins-github-actions--flush-timer nil))
+    (puthash "T1" (list :head-rev "a" :total 2 :success 2 :failure 0
+                        :skipped 0 :fetching nil)
+             forge-plugins-github-actions--cache)
+    (puthash "T2" (list :head-rev "b" :total 3 :success 1 :failure 0
+                        :skipped 0 :fetching nil)
+             forge-plugins-github-actions--cache)
+    (with-temp-buffer
+      (setq-local major-mode 'forge-topics-mode)
+      (let ((inhibit-read-only t) root s1 s2)
+        (setq root (magit-section :type 'root))
+        (oset root start (copy-marker (point-min)))
+        (insert "topic one\n")
+        (setq s1 (magit-section :type 'topic))
+        (oset s1 value t1)
+        (oset s1 start (copy-marker 1))
+        (insert "topic two\n")
+        (setq s2 (magit-section :type 'topic))
+        (oset s2 value t2)
+        (oset s2 start (copy-marker 11))
+        (oset root children (list s1 s2))
+        (setq-local magit-root-section root)
+        (puthash "T1" t1 forge-plugins-github-actions--pending)
+        (puthash "T2" t2 forge-plugins-github-actions--pending)
+        (forge-plugins-github-actions--flush)
+        ;; Both badges applied, pending drained, no timer left armed.
+        (should (string-match-p "topic one (2/2)" (buffer-string)))
+        (should (string-match-p "topic two (1/3)" (buffer-string)))
+        (should (= 0 (hash-table-count forge-plugins-github-actions--pending)))))))
 
 (ert-deftest forge-plugins-github-actions-test-skipped-neutral-non-blocking ()
   "Skipped and neutral runs count in the denominator but don't block success.

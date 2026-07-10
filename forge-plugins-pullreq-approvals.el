@@ -67,13 +67,15 @@ GitHub API is not hammered while keeping fetches concurrent."
 
 ;;;###autoload
 (defcustom forge-plugins-pullreq-approvals-refresh-delay 0.3
-  "Delay in seconds before refreshing pull request buffers after a fetch.
+  "Throttle window, in seconds, for applying fetched approvals to buffers.
 Topic-list buffers (Magit status, forge topics and notifications) have
-their per-topic approvals badge patched in place as each fetch
-completes, so they update progressively without a full re-render.
-Only pull request topic buffers, which carry the full Approvals
-section, are refreshed via `magit-refresh-buffer'; completions within
-this window are coalesced into a single such refresh."
+their per-topic approvals badges patched in place; all completions
+within one window are applied in a single section-tree walk and
+redisplay, so a burst of fetches on a large topic list does not stutter
+Emacs.  Pull request topic buffers, which carry the full Approvals
+section, are refreshed via `magit-refresh-buffer', coalesced the same
+way.  Lower values update more eagerly; higher values coalesce more
+aggressively."
   :package-version '(forge-plugins-pullreq-approvals . "0.1.0")
   :group 'forge
   :type 'number)
@@ -125,8 +127,8 @@ Only `forge-pullreq-mode' buffers are fully refreshed, because that
 is the only mode carrying the Approvals section.  Topic-list buffers
 \(`forge-topics-mode', `magit-status-mode', `forge-notifications-mode')
 have their per-topic approvals badge patched in place by
-`forge-plugins-pullreq-approvals--update-topic-line' instead, so they
-never incur a full re-render."
+`forge-plugins-pullreq-approvals--flush' instead, so they never incur
+a full re-render."
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (when (derived-mode-p 'forge-pullreq-mode)
@@ -149,22 +151,6 @@ completions does not trigger a refresh storm."
          (lambda ()
            (setq forge-plugins-pullreq-approvals--refresh-timer nil)
            (forge-plugins-pullreq-approvals--refresh-buffers)))))
-
-(defun forge-plugins-pullreq-approvals--find-topic-section (id)
-  "Return the Magit section whose value is a pull request with ID.
-Search the current buffer's section tree; return nil when absent."
-  (when (bound-and-true-p magit-root-section)
-    (catch 'found
-      (letrec ((walk
-                (lambda (section)
-                  (let ((value (oref section value)))
-                    (when (and (forge-pullreq-p value)
-                               (equal (oref value id) id))
-                      (throw 'found section)))
-                  (dolist (child (oref section children))
-                    (funcall walk child)))))
-        (funcall walk magit-root-section))
-      nil)))
 
 (defun forge-plugins-pullreq-approvals--patch-line-badge (section topic)
   "Replace the approvals badge on SECTION's topic line for TOPIC in place.
@@ -195,23 +181,62 @@ yields identical output."
               (forge-plugins-pullreq-approvals--promote-status-overlay
                beg (point)))))))))
 
-(defun forge-plugins-pullreq-approvals--update-topic-line (topic)
-  "Patch TOPIC's approvals badge in every open topic-list buffer.
-Updates only the single topic line in place, avoiding the
-whole-buffer re-render that `magit-refresh-buffer' performs."
-  (let ((id (oref topic id)))
+(defvar forge-plugins-pullreq-approvals--pending (make-hash-table :test 'equal)
+  "Topics whose approvals badge awaits an in-place patch.
+Keys are topic IDs, values the topics.  Drained by
+`forge-plugins-pullreq-approvals--flush'.")
+
+(defvar forge-plugins-pullreq-approvals--flush-timer nil
+  "Pending timer used to throttle in-place badge patching.")
+
+(defun forge-plugins-pullreq-approvals--flush ()
+  "Patch every pending topic's badge in one pass per list buffer.
+A single Magit section-tree walk per topic-list buffer patches all
+topics queued by `forge-plugins-pullreq-approvals--note-pending', so
+the cost is linear in the number of sections regardless of how many
+topics completed."
+  (setq forge-plugins-pullreq-approvals--flush-timer nil)
+  (let ((batch forge-plugins-pullreq-approvals--pending))
+    (setq forge-plugins-pullreq-approvals--pending (make-hash-table :test 'equal))
     (dolist (buf (buffer-list))
       (with-current-buffer buf
         (when (and (or (derived-mode-p 'forge-topics-mode)
                        (derived-mode-p 'magit-status-mode)
                        (derived-mode-p 'forge-notifications-mode))
                    (bound-and-true-p magit-root-section))
-          (when-let ((section
-                      (forge-plugins-pullreq-approvals--find-topic-section id)))
-            (forge-plugins-pullreq-approvals--patch-line-badge section topic)))))))
+          (letrec ((walk
+                    (lambda (section)
+                      (let ((value (oref section value)))
+                        (when (forge-pullreq-p value)
+                          (when-let ((topic (gethash (oref value id) batch)))
+                            (forge-plugins-pullreq-approvals--patch-line-badge
+                             section topic))))
+                      (dolist (child (oref section children))
+                        (funcall walk child)))))
+            (funcall walk magit-root-section)))))))
+
+(defun forge-plugins-pullreq-approvals--note-pending (topic)
+  "Queue TOPIC for a throttled in-place badge patch, then a refresh.
+Successive completions within
+`forge-plugins-pullreq-approvals-refresh-delay' seconds are coalesced
+into a single tree walk and buffer redisplay, so a burst of fetches on
+a large topic list does not stutter Emacs."
+  (puthash (oref topic id) topic forge-plugins-pullreq-approvals--pending)
+  (unless (timerp forge-plugins-pullreq-approvals--flush-timer)
+    (setq forge-plugins-pullreq-approvals--flush-timer
+          (run-with-timer
+           forge-plugins-pullreq-approvals-refresh-delay nil
+           #'forge-plugins-pullreq-approvals--flush)))
+  (forge-plugins-pullreq-approvals--schedule-refresh))
 
 (defvar forge-plugins-pullreq-approvals--queue nil
   "FIFO list of topics pending an approvals fetch.")
+
+(defvar forge-plugins-pullreq-approvals--queue-tail nil
+  "Last cons of `forge-plugins-pullreq-approvals--queue'.
+Tracked so enqueuing appends in constant time instead of walking
+the whole queue, which is O(n^2) across a full render on large
+topic lists.")
 
 (defvar forge-plugins-pullreq-approvals--inflight 0
   "Number of approvals fetches currently in flight.")
@@ -223,8 +248,11 @@ whole-buffer re-render that `magit-refresh-buffer' performs."
   "Queue TOPIC for an approvals fetch and schedule the queue to drain.
 The actual dispatch happens from a timer so that no network setup
 work is performed during buffer redisplay."
-  (setq forge-plugins-pullreq-approvals--queue
-        (nconc forge-plugins-pullreq-approvals--queue (list topic)))
+  (let ((cell (list topic)))
+    (if forge-plugins-pullreq-approvals--queue-tail
+        (setcdr forge-plugins-pullreq-approvals--queue-tail cell)
+      (setq forge-plugins-pullreq-approvals--queue cell))
+    (setq forge-plugins-pullreq-approvals--queue-tail cell))
   (unless (timerp forge-plugins-pullreq-approvals--dispatch-timer)
     (setq forge-plugins-pullreq-approvals--dispatch-timer
           (run-with-timer
@@ -243,6 +271,10 @@ stays below
               (< forge-plugins-pullreq-approvals--inflight
                  forge-plugins-pullreq-approvals-max-concurrent-requests))
     (let ((topic (pop forge-plugins-pullreq-approvals--queue)))
+      ;; Clear the tail before --fetch so the queue invariant holds; safe
+      ;; because --fetch is async and cannot re-enter --enqueue synchronously.
+      (unless forge-plugins-pullreq-approvals--queue
+        (setq forge-plugins-pullreq-approvals--queue-tail nil))
       (cl-incf forge-plugins-pullreq-approvals--inflight)
       (forge-plugins-pullreq-approvals--fetch topic))))
 
@@ -305,8 +337,7 @@ the required approval count, and RESULT the cons returned by
    "Stored approvals for topic %s: approved=%s required=%s"
    (oref topic id) (car result) required)
   (forge-plugins-pullreq-approvals--fetch-done)
-  (forge-plugins-pullreq-approvals--update-topic-line topic)
-  (forge-plugins-pullreq-approvals--schedule-refresh))
+  (forge-plugins-pullreq-approvals--note-pending topic))
 
 (defun forge-plugins-pullreq-approvals--store-error (topic head-rev)
   "Record a failed approvals fetch for TOPIC against HEAD-REV."
@@ -314,8 +345,7 @@ the required approval count, and RESULT the cons returned by
            (list :head-rev head-rev :fetching nil :error t)
            forge-plugins-pullreq-approvals--cache)
   (forge-plugins-pullreq-approvals--fetch-done)
-  (forge-plugins-pullreq-approvals--update-topic-line topic)
-  (forge-plugins-pullreq-approvals--schedule-refresh))
+  (forge-plugins-pullreq-approvals--note-pending topic))
 
 (defun forge-plugins-pullreq-approvals--fetch-reviews (topic head-rev required)
   "Fetch reviews for TOPIC and store the resulting approvals.
@@ -549,6 +579,7 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
   (let ((n (length forge-plugins-pullreq-approvals--queue)))
     (setq forge-plugins-pullreq-approvals--dispatch-timer nil
           forge-plugins-pullreq-approvals--queue nil
+          forge-plugins-pullreq-approvals--queue-tail nil
           forge-plugins-pullreq-approvals--inflight 0)
     (forge-plugins-pullreq-approvals--debug "Cleared fetch queue (%d pending)" n)
     (when (called-interactively-p 'interactive)

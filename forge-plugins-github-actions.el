@@ -64,13 +64,14 @@ GitHub API is not hammered while keeping fetches concurrent."
 
 ;;;###autoload
 (defcustom forge-plugins-github-actions-refresh-delay 0.3
-  "Delay in seconds before refreshing pull request buffers after a fetch.
+  "Throttle window, in seconds, for applying fetched status to buffers.
 Topic-list buffers (Magit status, forge topics and notifications) have
-their per-topic status badge patched in place as each fetch completes,
-so they update progressively without a full re-render.  Only pull
+their per-topic status badges patched in place; all completions within
+one window are applied in a single section-tree walk and redisplay, so
+a burst of fetches on a large topic list does not stutter Emacs.  Pull
 request topic buffers, which carry the full Actions section, are
-refreshed via `magit-refresh-buffer'; completions within this window
-are coalesced into a single such refresh."
+refreshed via `magit-refresh-buffer', coalesced the same way.  Lower
+values update more eagerly; higher values coalesce more aggressively."
   :package-version '(forge-plugins-github-actions . "0.1.0")
   :group 'forge
   :type 'number)
@@ -167,8 +168,8 @@ Only `forge-pullreq-mode' buffers are fully refreshed, because that
 is the only mode carrying the Actions section.  Topic-list buffers
 \(`forge-topics-mode', `magit-status-mode', `forge-notifications-mode')
 have their per-topic status badge patched in place by
-`forge-plugins-github-actions--update-topic-line' instead, so they
-never incur a full re-render."
+`forge-plugins-github-actions--flush' instead, so they never incur a
+full re-render."
   (dolist (buf (buffer-list))
     (with-current-buffer buf
       (when (derived-mode-p 'forge-pullreq-mode)
@@ -190,22 +191,6 @@ fetch completions does not trigger a refresh storm."
          (lambda ()
            (setq forge-plugins-github-actions--refresh-timer nil)
            (forge-plugins-github-actions--refresh-buffers)))))
-
-(defun forge-plugins-github-actions--find-topic-section (id)
-  "Return the Magit section whose value is a pull request with ID.
-Search the current buffer's section tree; return nil when absent."
-  (when (bound-and-true-p magit-root-section)
-    (catch 'found
-      (letrec ((walk
-                (lambda (section)
-                  (let ((value (oref section value)))
-                    (when (and (forge-pullreq-p value)
-                               (equal (oref value id) id))
-                      (throw 'found section)))
-                  (dolist (child (oref section children))
-                    (funcall walk child)))))
-        (funcall walk magit-root-section))
-      nil)))
 
 (defun forge-plugins-github-actions--patch-line-badge (section topic)
   "Replace the status badge on SECTION's topic line for TOPIC in place.
@@ -236,23 +221,61 @@ yields identical output."
               (forge-plugins-github-actions--promote-status-overlay
                beg (point)))))))))
 
-(defun forge-plugins-github-actions--update-topic-line (topic)
-  "Patch TOPIC's status badge in every open topic-list buffer.
-Updates only the single topic line in place, avoiding the
-whole-buffer re-render that `magit-refresh-buffer' performs."
-  (let ((id (oref topic id)))
+(defvar forge-plugins-github-actions--pending (make-hash-table :test 'equal)
+  "Topics whose status badge awaits an in-place patch.
+Keys are topic IDs, values the topics.  Drained by
+`forge-plugins-github-actions--flush'.")
+
+(defvar forge-plugins-github-actions--flush-timer nil
+  "Pending timer used to throttle in-place badge patching.")
+
+(defun forge-plugins-github-actions--flush ()
+  "Patch every pending topic's badge in one pass per list buffer.
+A single Magit section-tree walk per topic-list buffer patches all
+topics queued by `forge-plugins-github-actions--note-pending', so the
+cost is linear in the number of sections regardless of how many
+topics completed."
+  (setq forge-plugins-github-actions--flush-timer nil)
+  (let ((batch forge-plugins-github-actions--pending))
+    (setq forge-plugins-github-actions--pending (make-hash-table :test 'equal))
     (dolist (buf (buffer-list))
       (with-current-buffer buf
         (when (and (or (derived-mode-p 'forge-topics-mode)
                        (derived-mode-p 'magit-status-mode)
                        (derived-mode-p 'forge-notifications-mode))
                    (bound-and-true-p magit-root-section))
-          (when-let ((section
-                      (forge-plugins-github-actions--find-topic-section id)))
-            (forge-plugins-github-actions--patch-line-badge section topic)))))))
+          (letrec ((walk
+                    (lambda (section)
+                      (let ((value (oref section value)))
+                        (when (forge-pullreq-p value)
+                          (when-let ((topic (gethash (oref value id) batch)))
+                            (forge-plugins-github-actions--patch-line-badge
+                             section topic))))
+                      (dolist (child (oref section children))
+                        (funcall walk child)))))
+            (funcall walk magit-root-section)))))))
+
+(defun forge-plugins-github-actions--note-pending (topic)
+  "Queue TOPIC for a throttled in-place badge patch, then a refresh.
+Successive completions within `forge-plugins-github-actions-refresh-delay'
+seconds are coalesced into a single tree walk and buffer redisplay, so
+a burst of fetches on a large topic list does not stutter Emacs."
+  (puthash (oref topic id) topic forge-plugins-github-actions--pending)
+  (unless (timerp forge-plugins-github-actions--flush-timer)
+    (setq forge-plugins-github-actions--flush-timer
+          (run-with-timer
+           forge-plugins-github-actions-refresh-delay nil
+           #'forge-plugins-github-actions--flush)))
+  (forge-plugins-github-actions--schedule-refresh))
 
 (defvar forge-plugins-github-actions--queue nil
   "FIFO list of topics pending a check-run fetch.")
+
+(defvar forge-plugins-github-actions--queue-tail nil
+  "Last cons of `forge-plugins-github-actions--queue'.
+Tracked so enqueuing appends in constant time instead of walking
+the whole queue, which is O(n^2) across a full render on large
+topic lists.")
 
 (defvar forge-plugins-github-actions--inflight 0
   "Number of check-run fetches currently in flight.")
@@ -264,8 +287,11 @@ whole-buffer re-render that `magit-refresh-buffer' performs."
   "Queue TOPIC for a check-run fetch and schedule the queue to drain.
 The actual dispatch happens from a timer so that no network setup
 work is performed during buffer redisplay."
-  (setq forge-plugins-github-actions--queue
-        (nconc forge-plugins-github-actions--queue (list topic)))
+  (let ((cell (list topic)))
+    (if forge-plugins-github-actions--queue-tail
+        (setcdr forge-plugins-github-actions--queue-tail cell)
+      (setq forge-plugins-github-actions--queue cell))
+    (setq forge-plugins-github-actions--queue-tail cell))
   (unless (timerp forge-plugins-github-actions--dispatch-timer)
     (setq forge-plugins-github-actions--dispatch-timer
           (run-with-timer
@@ -283,6 +309,10 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
               (< forge-plugins-github-actions--inflight
                  forge-plugins-github-actions-max-concurrent-requests))
     (let ((topic (pop forge-plugins-github-actions--queue)))
+      ;; Clear the tail before --fetch so the queue invariant holds; safe
+      ;; because --fetch is async and cannot re-enter --enqueue synchronously.
+      (unless forge-plugins-github-actions--queue
+        (setq forge-plugins-github-actions--queue-tail nil))
       (cl-incf forge-plugins-github-actions--inflight)
       (forge-plugins-github-actions--fetch topic))))
 
@@ -331,8 +361,7 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
                          :fetching nil)
                    forge-plugins-github-actions--cache)
           (forge-plugins-github-actions--fetch-done)
-          (forge-plugins-github-actions--update-topic-line topic)
-          (forge-plugins-github-actions--schedule-refresh)))
+          (forge-plugins-github-actions--note-pending topic)))
       :errorback
       (lambda (err _headers _status _req)
         (forge-plugins-github-actions--debug
@@ -346,8 +375,7 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
                        :error t)
                  forge-plugins-github-actions--cache)
         (forge-plugins-github-actions--fetch-done)
-        (forge-plugins-github-actions--update-topic-line topic)
-        (forge-plugins-github-actions--schedule-refresh)))))
+        (forge-plugins-github-actions--note-pending topic)))))
 
 (defun forge-plugins-github-actions--insert-faced (text face)
   "Insert TEXT and overlay it with FACE so it renders above section highlight.
@@ -615,8 +643,7 @@ section line in any magit or forge buffer, retries that run."
             (puthash id
                      (plist-put cached :fetching t)
                      forge-plugins-github-actions--cache)
-            (forge-plugins-github-actions--update-topic-line topic)
-            (forge-plugins-github-actions--schedule-refresh)))
+            (forge-plugins-github-actions--note-pending topic)))
         (run-with-timer
          2 nil #'forge-plugins-github-actions--enqueue topic))
       :errorback
@@ -1034,6 +1061,7 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
   (let ((n (length forge-plugins-github-actions--queue)))
     (setq forge-plugins-github-actions--dispatch-timer nil
           forge-plugins-github-actions--queue nil
+          forge-plugins-github-actions--queue-tail nil
           forge-plugins-github-actions--inflight 0)
     (forge-plugins-github-actions--debug "Cleared fetch queue (%d pending)" n)
     (when (called-interactively-p 'interactive)

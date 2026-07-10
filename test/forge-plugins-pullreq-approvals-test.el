@@ -42,6 +42,42 @@
           (goto-char (point-min))
           (should-not (re-search-forward "<1/2>.*<1/2>" nil t)))))))
 
+(ert-deftest forge-plugins-pullreq-approvals-test-flush-batches ()
+  "A single flush patches every pending topic in one tree walk."
+  (let* ((t1 (forge-pullreq :id "T1" :head-rev "a"))
+         (t2 (forge-pullreq :id "T2" :head-rev "b"))
+         (forge-plugins-pullreq-approvals--cache (make-hash-table :test 'equal))
+         (forge-plugins-pullreq-approvals--pending (make-hash-table :test 'equal))
+         (forge-plugins-pullreq-approvals--flush-timer nil))
+    (puthash "T1" (list :head-rev "a" :approved 2 :required 2
+                        :reviews nil :fetching nil)
+             forge-plugins-pullreq-approvals--cache)
+    (puthash "T2" (list :head-rev "b" :approved 1 :required 3
+                        :reviews nil :fetching nil)
+             forge-plugins-pullreq-approvals--cache)
+    (with-temp-buffer
+      (setq-local major-mode 'forge-topics-mode)
+      (let ((inhibit-read-only t) root s1 s2)
+        (setq root (magit-section :type 'root))
+        (oset root start (copy-marker (point-min)))
+        (insert "topic one\n")
+        (setq s1 (magit-section :type 'topic))
+        (oset s1 value t1)
+        (oset s1 start (copy-marker 1))
+        (insert "topic two\n")
+        (setq s2 (magit-section :type 'topic))
+        (oset s2 value t2)
+        (oset s2 start (copy-marker 11))
+        (oset root children (list s1 s2))
+        (setq-local magit-root-section root)
+        (puthash "T1" t1 forge-plugins-pullreq-approvals--pending)
+        (puthash "T2" t2 forge-plugins-pullreq-approvals--pending)
+        (forge-plugins-pullreq-approvals--flush)
+        (should (string-match-p "topic one <2/2>" (buffer-string)))
+        (should (string-match-p "topic two <1/3>" (buffer-string)))
+        (should (= 0 (hash-table-count
+                      forge-plugins-pullreq-approvals--pending)))))))
+
 (ert-deftest forge-plugins-pullreq-approvals-test-clear-queue ()
   "Clearing the queue empties it, cancels the timer and zeroes in-flight."
   (let ((forge-plugins-pullreq-approvals--queue (list 'a 'b))
