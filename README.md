@@ -14,7 +14,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
       forge-plugins-github-actions-enable t
       forge-plugins-pullreq-commits-enable t
       forge-plugins-pullreq-approvals-enable t
-      forge-plugins-github-projects-enable t)
+      forge-plugins-github-projects-enable t
+      forge-plugins-github-reviews-enable t)
 
 (forge-plugins-enable)
 ```
@@ -29,6 +30,7 @@ With `use-package`:
   (forge-plugins-pullreq-commits-enable t)
   (forge-plugins-pullreq-approvals-enable t)
   (forge-plugins-github-projects-enable t)
+  (forge-plugins-github-reviews-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -229,3 +231,53 @@ In an issue or pull request topic buffer:
 - `p a` -- Add the topic to a project.
 - `p s` -- Set the topic's status in a project.
 - `p r` -- Remove the topic from a project.
+
+## GitHub Reviews
+
+Integrate GitHub pull request **review threads** — the resolvable, inline code-comment conversations. `forge` models none of this, so everything is fetched and mutated through GitHub's GraphQL API. This is distinct from the [Pull Request Approvals](#pull-request-approvals) plugin, which tracks review *submissions* (`APPROVED`/`CHANGES_REQUESTED`).
+
+Pull request topic lines (in topic/notification lists and the Magit status buffer) and the pull request topic view gain a `{x}` badge, where `x` is the number of **unresolved** review threads (threads whose `isResolved` is false). The badge is faced with `forge-plugins-github-reviews-unresolved` (yellow) and is hidden entirely when every thread is resolved or the pull request has no review threads. The curly-brace form `{x}` distinguishes it from the approvals indicator `<x/y>` and the GitHub Actions indicator `(x/y)`.
+
+Queries and mutations are raw GraphQL POSTed to the `/graphql` endpoint via `ghub-request` (the same primitive `forge` uses), authenticated with `:auth 'forge`, so the repository's existing token and host are reused. Badge reads are asynchronous, queued and cached the same way as the approvals plugin, so opening a topic never blocks on the network; the interaction commands run synchronously in response to a keypress, then invalidate the cache and refresh.
+
+**Flag:** `forge-plugins-github-reviews-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+### Reviews section
+
+In `forge-pullreq-mode` a collapsible `Reviews` section (with `TAB`) is inserted directly before the pull request description. Its heading carries the same `{x}` badge, and its body lists each review thread as a nested collapsible section headed `path:line [unresolved]` (or `[resolved]`, dimmed and collapsed by default) with a comment count. Each comment line shows its author and the first line of its body; `RET` on a comment visits the commented-on file at its line in the pull request's local worktree, and `b` opens the comment on GitHub.
+
+### Keybindings
+
+In a pull request buffer (`forge-pullreq-mode`), a `v` prefix keymap acts on the review thread or comment at point (or, when point is not on one, prompts among the pull request's threads):
+
+- `v c` -- **Reply** to the thread at point (GraphQL `addPullRequestReviewThreadReply`). The reply body is composed in a `forge` post buffer (`gfm-mode`, submitted with `C-c C-c`), so it behaves like any other `forge` post.
+- `v e` -- **Edit** your own comment at point, composed the same way and prefilled with the current body (GraphQL `updatePullRequestReviewComment`). Only comments you authored can be edited.
+- `v @` -- **React** to the comment at point, choosing among GitHub's eight reaction emoji (GraphQL `addReaction`).
+- `v r` -- **Resolve or unresolve** the thread at point, toggling on its current state (GraphQL `resolveReviewThread` / `unresolveReviewThread`).
+- `v g` -- **Refresh** the review threads, forcing a fresh fetch. Reviews change without a new push (the head revision is unchanged), in which case magit's `g` (`magit-refresh`) reuses the cached status; this command bypasses the cache.
+- `v ?` -- Show a `transient` menu of the above.
+
+On a comment line in the `Reviews` section:
+
+- `RET` -- Visit the commented-on file at its line in the pull request's local worktree (the file is opened at its beginning when the thread is outdated or file-level and has no line).
+- `b` -- Open the comment on GitHub in the browser.
+
+The mutation commands run synchronously, then invalidate the cache and refresh the buffer.
+
+> **Keybinding note:** the `v` prefix shadows magit's `magit-reverse` inside pull request buffers. To free `v`, rebind `forge-plugins-github-reviews-prefix-map` to another key in `forge-pullreq-mode-map` instead.
+
+### Token scope
+
+Reading review threads and reacting requires the `repo` scope (or fine-grained *Pull requests: read*) on the token `forge` uses; replying, editing and resolving require write access (`repo`, or fine-grained *Pull requests: write*). A token without the needed scope will get a permission error from the GraphQL API.
+
+### Customization
+
+- `forge-plugins-github-reviews-debug` -- Whether to enable debug logging. If non-nil, debug logs are written to the buffer `*forge-plugins-github-reviews-debug*`.
+
+- `forge-plugins-github-reviews-max-concurrent-requests` -- Maximum number of review-thread fetches to run concurrently (default `6`). Fetches are queued and dispatched as in-flight requests complete, so status for many pull requests is fetched in parallel without blocking Emacs or hammering the GitHub API.
+
+- `forge-plugins-github-reviews-refresh-delay` -- Throttle window in seconds (default `0.3`) for applying fetched reviews to buffers. In topic-list buffers the per-topic badges are patched in place; every completion landing within one window is applied in a single section-tree walk and redisplay, so a burst of fetches on a large topic list is coalesced. Pull request topic buffers, which carry the full Reviews section, are refreshed the same way. Lower the value to update more eagerly, raise it to coalesce more aggressively.
+
+The command `forge-plugins-github-reviews-clear-queue` (no default keybinding, run via `M-x`) empties the pending review fetch queue and resets the dispatch state, to recover if fetches ever get stuck. It also runs automatically when the plugin is disabled.

@@ -36,6 +36,7 @@
 (require 'forge-plugins-pullreq-commits)
 (require 'forge-plugins-pullreq-approvals)
 (require 'forge-plugins-github-projects)
+(require 'forge-plugins-github-reviews)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
@@ -50,7 +51,9 @@
   (when forge-plugins-pullreq-approvals-enable
     (forge-plugins-pullreq-approvals-enable))
   (when forge-plugins-github-projects-enable
-    (forge-plugins-github-projects-enable)))
+    (forge-plugins-github-projects-enable))
+  (when forge-plugins-github-reviews-enable
+    (forge-plugins-github-reviews-enable)))
 
 (provide 'forge-plugins)
 ;;; forge-plugins.el ends here
