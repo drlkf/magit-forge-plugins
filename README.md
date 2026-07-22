@@ -212,6 +212,41 @@ The mutation commands run synchronously (they react to an explicit keypress), th
 
 > **Keybinding note:** the `p` prefix shadows magit's `magit-section-backward` (previous section) inside topic buffers, as specified. To free `p`, rebind `forge-plugins-github-projects-prefix-map` to another key in `forge-topic-mode-map` instead.
 
+### View-filtered board
+
+**Tested-on-forge:** `0.6.6`
+
+`M-x forge-plugins-github-projects-browse-view` opens a board for any organization or user project — without needing a buffer associated with a repository in that project — and restricts the displayed items to those that match a named view's server-side filter string.
+
+```
+M-x forge-plugins-github-projects-browse-view RET
+Owner: tsuga-dev RET
+Project number: 19 RET
+View name: Current Sprint RET
+```
+
+The command:
+
+1. Picks any tracked GitHub repository to borrow authentication credentials from (no buffer context required).
+2. Resolves the project by owner + number using the GraphQL `organization` root field, with an automatic fallback to `user` when the owner is not an org login.  Pass a non-nil `user-owner-p` argument from Lisp to skip the org attempt.
+3. Fetches the project's views and finds the named one (case-insensitive match).
+4. Parses the view's server-side filter string and builds a local predicate applied before bucketing items into columns.
+
+The resulting buffer is identical to the one opened by `forge-plugins-github-projects` — same mode, same `g` to refresh, same `RET`/`b` to open a card — but shows only items matching the view filter.
+
+#### Supported filter subset
+
+The parser handles the subset of the GitHub Projects filter syntax that drives board columns:
+
+| Token | Effect |
+|-------|--------|
+| `status:V1,V2,...` | Keep only items whose Status equals one of the listed values (case-insensitive) |
+| `-status:V1,V2,...` | Drop items whose Status equals any of the listed values |
+| `is:issue` / `-is:pr` | Keep only Issues and Draft Issues (drop Pull Requests) |
+| `is:pr` / `-is:issue` | Keep only Pull Requests |
+
+Multi-word status values are quoted in the filter string (e.g. `"In progress"`); the parser strips the quotes and compares case-insensitively.  Unsupported tokens (`no:`, `label:`, date ranges, OR-groups) are silently ignored.
+
 ### Token scope
 
 Reading Projects v2 requires the `read:project` scope on the token `forge` uses; the `p a`/`p s`/`p r` mutations require the `project` scope. A classic token without the needed scope will get a permission error from the GraphQL API.

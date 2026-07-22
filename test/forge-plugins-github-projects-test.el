@@ -16,10 +16,11 @@
 (ert-deftest forge-plugins-github-projects-test-api-surface ()
   "The forge and ghub symbols and slots the plugin relies on must exist."
   (should (fboundp 'forge-get-repository))
+  (should (fboundp 'forge--ls-repos))
   (should (fboundp 'ghub-request))
   (should (fboundp 'forge-insert-post))
   (should (boundp 'forge-topic-mode-map))
-  (dolist (slot '(owner name apihost))
+  (dolist (slot '(owner name apihost condition))
     (should (cl-find slot (eieio-class-slots 'forge-github-repository)
                      :key #'eieio-slot-descriptor-name)))
   ;; `their-id' is the GraphQL node ID used as the mutation content ID.
@@ -32,6 +33,7 @@
   (should (commandp 'forge-plugins-github-projects-add))
   (should (commandp 'forge-plugins-github-projects-set-status))
   (should (commandp 'forge-plugins-github-projects-remove))
+  (should (commandp 'forge-plugins-github-projects-browse-view))
   (should (keymapp forge-plugins-github-projects-prefix-map)))
 
 (ert-deftest forge-plugins-github-projects-test-queries-are-strings ()
@@ -79,7 +81,36 @@ so a wrong `alist-get'/`let-alist' path fails the build."
 (ert-deftest forge-plugins-github-projects-test-disabled-by-default ()
   "The plugin flag defaults to nil and its command refuses when off."
   (let ((forge-plugins-github-projects-enable nil))
-    (should-error (forge-plugins-github-projects) :type 'user-error)))
+    (should-error (forge-plugins-github-projects) :type 'user-error)
+    (should-error (forge-plugins-github-projects-browse-view "org" 1 "view")
+                  :type 'user-error)))
+
+(ert-deftest forge-plugins-github-projects-test-parse-view-filter ()
+  "Parse the real sprint view filter string correctly."
+  (let* ((filter "status:Ready,\"In progress\",\"In review\",Done -is:pr")
+         (plist (forge-plugins-github-projects--parse-view-filter filter)))
+    (should (equal (plist-get plist :status-include)
+                   '("ready" "in progress" "in review" "done")))
+    (should (null (plist-get plist :status-exclude)))
+    (should (eq (plist-get plist :only-kind) 'issue))))
+
+(ert-deftest forge-plugins-github-projects-test-filter-predicate ()
+  "The predicate built from a parsed filter keeps and drops correctly."
+  (let* ((plist (forge-plugins-github-projects--parse-view-filter
+                 "status:Ready,\"In progress\",\"In review\",Done -is:pr"))
+         (pred (forge-plugins-github-projects--filter-predicate plist))
+         (issue-ip '((fieldValueByName (name . "In progress"))
+                     (content (__typename . "Issue") (number . 1) (title . "t"))))
+         (pr       '((fieldValueByName (name . "Ready"))
+                     (content (__typename . "PullRequest") (number . 2) (title . "p"))))
+         (backlog  '((fieldValueByName (name . "Backlog"))
+                     (content (__typename . "Issue") (number . 3) (title . "b")))))
+    ;; "In progress" Issue matches status-include and is not a PR.
+    (should (funcall pred issue-ip))
+    ;; PR is excluded by only-kind even though status "Ready" is included.
+    (should-not (funcall pred pr))
+    ;; "Backlog" is not in status-include so it is excluded.
+    (should-not (funcall pred backlog))))
 
 (provide 'forge-plugins-github-projects-test)
 ;;; forge-plugins-github-projects-test.el ends here

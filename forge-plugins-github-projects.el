@@ -58,6 +58,7 @@
 (declare-function forge-get-repository "forge-core")
 (declare-function forge-issue-p "forge-issue")
 (declare-function forge-pullreq-p "forge-pullreq")
+(declare-function forge--ls-repos "forge-repo")
 
 (defconst forge-plugins-github-projects-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
@@ -67,6 +68,9 @@
 
 (defvar-local forge-plugins-github-projects--project-id nil
   "The ProjectV2 node ID displayed in the current buffer.")
+
+(defvar-local forge-plugins-github-projects--keep-item-p nil
+  "Optional filter predicate for the current board buffer; nil means show all.")
 
 ;; Projects v2 queries traverse GraphQL unions and interfaces
 ;; (`issueOrPullRequest', `fieldValueByName', single-select `field'),
@@ -106,10 +110,27 @@
        }
      }
    }"
-  "GraphQL query fetching one board's items grouped data.
+   "GraphQL query fetching one board's items grouped data.
 The board is resolved by its ProjectV2 node ID via the `node' root
 field: a project's number is scoped to its owning org or user, so a
 repo-linked org project does not resolve under `repository.projectV2'.")
+
+(defconst forge-plugins-github-projects--resolve-project-query
+  "query($o:String!,$n:Int!){
+     org:  organization(login:$o){ projectV2(number:$n){ id } }
+     user: user(login:$o){ projectV2(number:$n){ id } }
+   }"
+  "GraphQL query resolving an org-or-user project number to its node ID.
+Both root fields are queried in one round-trip; for any given login exactly
+one returns non-null (GitHub shares the user/org namespace).")
+
+(defconst forge-plugins-github-projects--views-query
+  "query($id:ID!){
+     node(id:$id){
+       ... on ProjectV2{ views(first:50){ nodes{ number name filter } } }
+     }
+   }"
+  "GraphQL query fetching a project's views with their server-side filter strings.")
 
 (defun forge-plugins-github-projects--errors (body)
   "Return a joined message string for BODY's GraphQL `errors', or nil."
@@ -163,6 +184,108 @@ owner and name into the GraphQL variables object."
            (ignore-errors (forge-get-repository :tracked)))
       (user-error "No forge repository in this buffer")))
 
+(defun forge-plugins-github-projects--any-repository ()
+  "Return the first tracked forge-github-repository or signal `user-error'.
+Used when there is no buffer-local forge repository (e.g. the board viewer
+opened from an arbitrary buffer) but we still need GitHub credentials."
+  (or (seq-find (lambda (r) (and (cl-typep r 'forge-github-repository)
+                                 (eq (oref r condition) :tracked)))
+                (forge--ls-repos))
+      (user-error "No tracked GitHub repository to authenticate with")))
+
+(defun forge-plugins-github-projects--resolve-project (repo owner number user-owner-p)
+  "Resolve OWNER's project NUMBER to its ProjectV2 node ID via REPO's auth.
+Tries the organization root field first unless USER-OWNER-P is non-nil,
+then falls back to the user root field.  Signals `user-error' if not found."
+  (let* ((data (forge-plugins-github-projects--graphql
+                repo forge-plugins-github-projects--resolve-project-query
+                (list (cons 'o owner) (cons 'n number))))
+         (id (or (and (not user-owner-p) (let-alist data .org.projectV2.id))
+                 (let-alist data .user.projectV2.id))))
+    (or id (user-error "Project #%d not found for %s" number owner))))
+
+(defun forge-plugins-github-projects--view-filter (repo project-id view-name)
+  "Return the filter string for view VIEW-NAME in project PROJECT-ID.
+Signals `user-error' if no view with that name exists."
+  (let* ((data (forge-plugins-github-projects--graphql
+                repo forge-plugins-github-projects--views-query
+                (list (cons 'id project-id))))
+         (nodes (let-alist data .node.views.nodes))
+         (view (seq-find (lambda (v)
+                           (string= (downcase (alist-get 'name v))
+                                    (downcase view-name)))
+                         nodes)))
+    (or (and view (or (alist-get 'filter view) ""))
+        (user-error "View %S not found in project" view-name))))
+
+(defun forge-plugins-github-projects--tokenize-filter (filter)
+  "Split FILTER on whitespace, keeping double-quoted substrings intact."
+  (let (tokens (pos 0) (len (length filter)))
+    (while (< pos len)
+      (while (and (< pos len) (memq (aref filter pos) '(?\s ?\t ?\n)))
+        (cl-incf pos))
+      (when (< pos len)
+        (let ((start pos) (in-quote nil))
+          (while (and (< pos len)
+                      (or in-quote
+                          (not (memq (aref filter pos) '(?\s ?\t ?\n)))))
+            (when (eq (aref filter pos) ?\") (setq in-quote (not in-quote)))
+            (cl-incf pos))
+          (push (substring filter start pos) tokens))))
+    (nreverse tokens)))
+
+(defun forge-plugins-github-projects--split-csv (str)
+  "Split comma-separated STR; strip surrounding double quotes; downcase."
+  (mapcar (lambda (s) (downcase (string-trim s "\"+" "\"+")))
+          (split-string str ",")))
+
+(defun forge-plugins-github-projects--parse-view-filter (filter)
+  "Parse a GitHub Projects v2 view FILTER string into a plist.
+Returns a plist with `:status-include', `:status-exclude' (lists of
+downcased status names), and `:only-kind' (symbol `issue', `pr', or nil).
+Handles `status:V,...' / `-status:V,...' and `is:issue|pr' / `-is:...'.
+;; ponytail: no:, label:, date ranges, OR-groups unsupported; add when needed."
+  (let (status-include status-exclude only-kind)
+    (dolist (token (forge-plugins-github-projects--tokenize-filter filter))
+      (let* ((neg (string-prefix-p "-" token))
+             (tok (if neg (substring token 1) token))
+             (colon (string-search ":" tok))
+             (key (if colon (substring tok 0 colon) tok))
+             (val (if colon (substring tok (1+ colon)) "")))
+        (pcase key
+          ("status"
+           (let ((vals (forge-plugins-github-projects--split-csv val)))
+             (if neg
+                 (setq status-exclude (append status-exclude vals))
+               (setq status-include (append status-include vals)))))
+          ("is"
+           (pcase (list neg val)
+             (`(nil "issue") (setq only-kind 'issue))
+             (`(nil "pr")    (setq only-kind 'pr))
+             (`(t   "pr")    (setq only-kind 'issue))
+             (`(t   "issue") (setq only-kind 'pr)))))))
+    (list :status-include status-include
+          :status-exclude status-exclude
+          :only-kind only-kind)))
+
+(defun forge-plugins-github-projects--filter-predicate (plist)
+  "Return a keep-item-p closure built from parsed filter PLIST.
+Status comparison is case-insensitive.  `only-kind' `issue' drops
+PullRequest items; `pr' keeps only PullRequest items."
+  (let ((include (plist-get plist :status-include))
+        (exclude (plist-get plist :status-exclude))
+        (kind    (plist-get plist :only-kind)))
+    (lambda (item)
+      (let* ((sv     (alist-get 'fieldValueByName item))
+             (status (downcase (or (alist-get 'name sv) "")))
+             (type   (alist-get '__typename (alist-get 'content item))))
+        (and (or (null include) (member status include))
+             (or (null exclude) (not (member status exclude)))
+             (pcase kind
+               ('issue (not (equal type "PullRequest")))
+               ('pr    (equal type "PullRequest"))
+               (_      t)))))))
+
 (defvar-keymap forge-plugins-github-projects-card-map
   :doc "Keymap on a Projects v2 card line."
   "RET" #'forge-plugins-github-projects-browse-card
@@ -194,12 +317,6 @@ owner and name into the GraphQL variables object."
   (setq-local revert-buffer-function
               #'forge-plugins-github-projects--revert))
 
-(defun forge-plugins-github-projects--revert (&rest _)
-  "Re-fetch and redraw the board in the current buffer."
-  (forge-plugins-github-projects--render
-   forge-plugins-github-projects--repo
-   forge-plugins-github-projects--project-id))
-
 (defun forge-plugins-github-projects--card-face (state)
   "Return the face for a card whose item STATE is given (may be nil)."
   (pcase state
@@ -230,9 +347,12 @@ owner and name into the GraphQL variables object."
      (list 'forge-plugins-github-projects-url url
            'keymap forge-plugins-github-projects-card-map))))
 
-(defun forge-plugins-github-projects--render (repo project-id)
+(defun forge-plugins-github-projects--render (repo project-id &optional keep-item-p)
   "Render the Projects v2 board PROJECT-ID (a node ID) of REPO.
-Draws into the current buffer."
+Draws into the current buffer.  Optional KEEP-ITEM-P is a predicate
+applied to each item alist; nil means show all items.
+;; ponytail: named columns emptied by the filter still render with (empty);
+;; hide them when display is too noisy."
   (let* ((data (forge-plugins-github-projects--graphql
                 repo forge-plugins-github-projects--items-query
                 (list (cons 'id project-id))))
@@ -240,11 +360,13 @@ Draws into the current buffer."
          ;; `options' on a single-select field is a plain list, not a
          ;; Relay connection, so it has no `nodes' wrapper.
          (options (alist-get 'options (alist-get 'field project)))
-         (items (alist-get 'nodes (alist-get 'items project)))
+         (items (let ((raw (alist-get 'nodes (alist-get 'items project))))
+                  (if keep-item-p (seq-filter keep-item-p raw) raw)))
          (inhibit-read-only t))
     (erase-buffer)
     (setq forge-plugins-github-projects--repo repo
-          forge-plugins-github-projects--project-id project-id)
+          forge-plugins-github-projects--project-id project-id
+          forge-plugins-github-projects--keep-item-p keep-item-p)
     (magit-insert-section (forge-plugins-github-projects-board)
       (insert (magit--propertize-face (or (alist-get 'title project) "Project")
                                       'magit-section-heading))
@@ -269,7 +391,14 @@ Draws into the current buffer."
                     (dolist (card cards)
                       (forge-plugins-github-projects--insert-card card))
                   (insert (propertize "  (empty)\n" 'face 'magit-dimmed)))))))))
-    (goto-char (point-min))))
+     (goto-char (point-min))))
+
+(defun forge-plugins-github-projects--revert (&rest _)
+  "Re-fetch and redraw the board in the current buffer."
+  (forge-plugins-github-projects--render
+   forge-plugins-github-projects--repo
+   forge-plugins-github-projects--project-id
+   forge-plugins-github-projects--keep-item-p))
 
 ;;;; Topic project membership
 
@@ -618,6 +747,33 @@ projects.  Bound to \\`p r' in topic buffers."
   "a" #'forge-plugins-github-projects-add
   "s" #'forge-plugins-github-projects-set-status
   "r" #'forge-plugins-github-projects-remove)
+
+;;;###autoload
+(defun forge-plugins-github-projects-browse-view (owner number view-name
+                                                        &optional user-owner-p)
+  "Open a filtered board for OWNER's project NUMBER, showing only VIEW-NAME items.
+VIEW-NAME is matched case-insensitively against the project's views; the
+view's server-side filter string is parsed and applied locally so the board
+shows only matching items.
+With optional USER-OWNER-P non-nil, OWNER is a user account; otherwise an
+organization login is tried first (auto-fallback to user if null).
+Requires the plugin to be enabled."
+  (interactive "sOwner: \nnProject number: \nsView name: ")
+  (unless forge-plugins-github-projects-enable
+    (user-error "The GitHub Projects plugin is disabled"))
+  (let* ((repo (forge-plugins-github-projects--any-repository))
+         (id (forge-plugins-github-projects--resolve-project
+              repo owner number user-owner-p))
+         (filter-str (forge-plugins-github-projects--view-filter repo id view-name))
+         (pred (unless (string-empty-p filter-str)
+                 (forge-plugins-github-projects--filter-predicate
+                  (forge-plugins-github-projects--parse-view-filter filter-str))))
+         (buffer (get-buffer-create
+                  (format "*forge-project: %s #%d (%s)*" owner number view-name))))
+    (with-current-buffer buffer
+      (forge-plugins-github-projects-mode)
+      (forge-plugins-github-projects--render repo id pred))
+    (pop-to-buffer buffer)))
 
 ;;;###autoload
 (defun forge-plugins-github-projects ()
