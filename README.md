@@ -15,7 +15,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
       forge-plugins-pullreq-commits-enable t
       forge-plugins-pullreq-approvals-enable t
       forge-plugins-github-projects-enable t
-      forge-plugins-github-reviews-enable t)
+      forge-plugins-github-reviews-enable t
+      forge-plugins-github-search-enable t)
 
 (forge-plugins-enable)
 ```
@@ -31,6 +32,7 @@ With `use-package`:
   (forge-plugins-pullreq-approvals-enable t)
   (forge-plugins-github-projects-enable t)
   (forge-plugins-github-reviews-enable t)
+  (forge-plugins-github-search-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -316,3 +318,36 @@ Reading review threads and reacting requires the `repo` scope (or fine-grained *
 - `forge-plugins-github-reviews-refresh-delay` -- Throttle window in seconds (default `0.3`) for applying fetched reviews to buffers. In topic-list buffers the per-topic badges are patched in place; every completion landing within one window is applied in a single section-tree walk and redisplay, so a burst of fetches on a large topic list is coalesced. Pull request topic buffers, which carry the full Reviews section, are refreshed the same way. Lower the value to update more eagerly, raise it to coalesce more aggressively.
 
 The command `forge-plugins-github-reviews-clear-queue` (no default keybinding, run via `M-x`) empties the pending review fetch queue and resets the dispatch state, to recover if fetches ever get stuck. It also runs automatically when the plugin is disabled.
+
+## GitHub Search
+
+Read-only viewer for GitHub's [search query syntax](https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests) (e.g. `review-requested:@me`, `status:success`, saved-search style queries). `forge` only models topics already synced into its local database, so it cannot filter on live, server-side-only criteria like review-request status or the latest commit's check status; this plugin runs the query string directly against GitHub's search instead.
+
+Run `M-x forge-plugins-github-search` from any buffer associated with a tracked GitHub repository (or any buffer at all, since it only borrows credentials). You are prompted for a search query string, and the matching issues and pull requests open in a flat, read-only `forge-plugins-github-search-mode` buffer, in the order returned by the query (respect a `sort:` qualifier in the query string itself). Each line shows the repository, number, `[draft]` marker (pull requests only) and title; merged and closed items are dimmed.
+
+From Lisp, `forge-plugins-github-search-browse-query` opens the same buffer non-interactively for a hardcoded query string, e.g. to bind a saved search to a key. GitHub has no public API to resolve a saved search (`github.com/pulls/<id>`) by its id, so reproduce its query string manually.
+
+```elisp
+(forge-plugins-github-search-browse-query
+ "org:my-org is:pr state:open draft:false review-requested:@me sort:updated-desc")
+```
+
+Search is a raw GraphQL `search(query:$q, type:ISSUE)` string POSTed to the `/graphql` endpoint via `ghub-request` (the same primitive `forge` uses), authenticated with `:auth 'forge`, so the repository's existing token and host are reused. Raw GraphQL is used for consistency with `forge-plugins-github-projects`, though this particular query does not require inline fragments.
+
+**Flag:** `forge-plugins-github-search-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+### Token scope
+
+Search requires the same scope as reading the matched items: `repo` (or fine-grained *Pull requests: read* / *Issues: read*) for private repositories, none for public ones.
+
+### Keybindings
+
+In the results buffer:
+
+- `g` -- Re-run the query and redraw the results.
+
+On a result line:
+
+- `RET` / `b` -- Open the item in the browser.
