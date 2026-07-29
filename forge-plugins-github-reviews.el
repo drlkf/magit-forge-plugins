@@ -54,6 +54,7 @@
 (require 'magit-section nil t)
 (require 'transient)
 (require 'cl-lib)
+(require 'forge-plugins-log)
 
 (declare-function forge-get-repository "forge-core")
 (declare-function forge-get-worktree "forge-repo")
@@ -175,12 +176,16 @@ own requests."
           :payload payload :auth 'forge :host (oref repo apihost) :forge 'github
           :callback
           (lambda (body _headers _status _req)
-            (if-let ((msg (forge-plugins-github-reviews--errors body)))
-                (when errorback (funcall errorback msg))
+             (if-let ((msg (forge-plugins-github-reviews--errors body)))
+                 (progn
+                   (forge-plugins-log-error "github-reviews" "%s" msg)
+                   (when errorback (funcall errorback msg)))
               (funcall callback (alist-get 'data body))))
           :errorback
-          (lambda (err _headers _status _req)
-            (when errorback (funcall errorback (format "%S" err)))))
+           (lambda (err _headers _status _req)
+             (let ((msg (format "%S" err)))
+               (forge-plugins-log-error "github-reviews" "%s" msg)
+               (when errorback (funcall errorback msg)))))
       (let* ((body (ghub-request "POST" "/graphql" nil
                      :payload payload :auth 'forge
                      :host (oref repo apihost) :forge 'github))
@@ -949,6 +954,12 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
 
 (when forge-plugins-github-reviews-enable
   (forge-plugins-github-reviews-enable))
+
+;;;###autoload
+(defun forge-plugins-github-reviews-show-errors ()
+  "Pop to the GitHub reviews plugin error buffer."
+  (interactive)
+  (forge-plugins-log-show "github-reviews"))
 
 (provide 'forge-plugins-github-reviews)
 ;;; forge-plugins-github-reviews.el ends here

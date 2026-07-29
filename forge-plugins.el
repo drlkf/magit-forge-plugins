@@ -31,6 +31,7 @@
 
 ;;; Code:
 
+(require 'forge-plugins-log)
 (require 'forge-plugins-topic-format)
 (require 'forge-plugins-github-actions)
 (require 'forge-plugins-pullreq-commits)

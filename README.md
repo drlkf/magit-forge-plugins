@@ -41,6 +41,21 @@ With `use-package`:
 
 # Plugins
 
+## Error buffers
+
+Asynchronous errors are recorded in a dedicated buffer for the plugin that
+encountered them. These buffers are always enabled and are named
+`*forge-plugins-PLUGIN-errors*`. Use the corresponding command to visit one:
+
+- `forge-plugins-github-actions-show-errors`
+- `forge-plugins-github-reviews-show-errors`
+- `forge-plugins-github-projects-show-errors`
+- `forge-plugins-pullreq-approvals-show-errors`
+- `forge-plugins-github-teams-show-errors`
+
+The existing `-debug` customizations and `*-debug*` buffers remain separate
+and continue to be opt-in.
+
 ## GitHub Teams
 
 Include GitHub teams in Forge's pull-request review-request prompt. Existing

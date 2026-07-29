@@ -54,6 +54,7 @@
 (require 'magit-section)
 (require 'transient)
 (require 'cl-lib)
+(require 'forge-plugins-log)
 
 (declare-function forge-get-repository "forge-core")
 (declare-function forge-issue-p "forge-issue")
@@ -153,12 +154,16 @@ own requests."
           :payload payload :auth 'forge :host (oref repo apihost) :forge 'github
           :callback
           (lambda (body _headers _status _req)
-            (if-let ((msg (forge-plugins-github-projects--errors body)))
-                (when errorback (funcall errorback msg))
+             (if-let ((msg (forge-plugins-github-projects--errors body)))
+                 (progn
+                   (forge-plugins-log-error "github-projects" "%s" msg)
+                   (when errorback (funcall errorback msg)))
               (funcall callback (alist-get 'data body))))
           :errorback
-          (lambda (err _headers _status _req)
-            (when errorback (funcall errorback (format "%S" err)))))
+           (lambda (err _headers _status _req)
+             (let ((msg (format "%S" err)))
+               (forge-plugins-log-error "github-projects" "%s" msg)
+               (when errorback (funcall errorback msg)))))
       (let* ((body (ghub-request "POST" "/graphql" nil
                      :payload payload :auth 'forge
                      :host (oref repo apihost) :forge 'github))
@@ -850,6 +855,12 @@ Installs the topic Projects section and binds the \\`p' prefix
 
 (when forge-plugins-github-projects-enable
   (forge-plugins-github-projects-enable))
+
+;;;###autoload
+(defun forge-plugins-github-projects-show-errors ()
+  "Pop to the GitHub Projects plugin error buffer."
+  (interactive)
+  (forge-plugins-log-show "github-projects"))
 
 (provide 'forge-plugins-github-projects)
 ;;; forge-plugins-github-projects.el ends here

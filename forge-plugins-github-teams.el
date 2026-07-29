@@ -10,6 +10,7 @@
 (require 'forge)
 (require 'forge-github)
 (require 'forge-topic)
+(require 'forge-plugins-log)
 
 (defgroup forge-plugins-github-teams nil
   "GitHub team review requests in Forge."
@@ -54,8 +55,12 @@
 
 (defun forge-plugins-github-teams--teams (repo)
   (or (gethash (oref repo id) forge-plugins-github-teams--cache)
-      (let ((teams (forge-rest repo "GET" "/orgs/:owner/teams" nil
-                                :unpaginate t :noerror t)))
+        (let ((teams (forge-rest repo "GET" "/orgs/:owner/teams" nil
+                                 :unpaginate t :noerror t)))
+          (unless teams
+            (forge-plugins-log-error "github-teams"
+                                     "Failed to fetch teams for %s"
+                                     (oref repo owner)))
         (puthash (oref repo id)
                  (if teams
                      (forge-plugins-github-teams--team-alist
@@ -130,6 +135,12 @@
                 #'forge-plugins-github-teams--read-reviewers)
   (advice-remove 'forge--set-topic-review-requests
                 #'forge-plugins-github-teams--set-reviewers))
+
+;;;###autoload
+(defun forge-plugins-github-teams-show-errors ()
+  "Pop to the GitHub teams plugin error buffer."
+  (interactive)
+  (forge-plugins-log-show "github-teams"))
 
 (provide 'forge-plugins-github-teams)
 ;;; forge-plugins-github-teams.el ends here

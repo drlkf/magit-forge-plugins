@@ -32,6 +32,7 @@
 (require 'magit-section nil t)
 (require 'ansi-color)
 (require 'cl-lib)
+(require 'forge-plugins-log)
 (require 'package)
 (require 'transient)
 
@@ -363,8 +364,11 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
           (forge-plugins-github-actions--fetch-done)
           (forge-plugins-github-actions--note-pending topic)))
       :errorback
-      (lambda (err _headers _status _req)
-        (forge-plugins-github-actions--debug
+       (lambda (err _headers _status _req)
+         (forge-plugins-log-error "github-actions"
+                                  "Failed to fetch check runs for topic %s: %S"
+                                  id err)
+         (forge-plugins-github-actions--debug
          "Failed to fetch check runs for topic %s: %S" id err)
         (puthash id
                  (list :head-rev head-rev
@@ -647,9 +651,12 @@ section line in any magit or forge buffer, retries that run."
         (run-with-timer
          2 nil #'forge-plugins-github-actions--enqueue topic))
       :errorback
-      (lambda (err &rest _)
-        (let ((msg (or (alist-get 'message err) "Unknown error")))
-          (message "Failed to re-run %s: %s" run-name msg)
+       (lambda (err &rest _)
+         (let ((msg (or (alist-get 'message err) "Unknown error")))
+           (forge-plugins-log-error "github-actions"
+                                    "Failed to request re-run of %s: %s"
+                                    run-name msg)
+           (message "Failed to re-run %s: %s" run-name msg)
           (forge-plugins-github-actions--debug
            "Failed to request re-run of check run %s: %S" run-name err))))))
 
@@ -933,8 +940,11 @@ beforehand by `forge-plugins-github-actions--log-fetch-and-display'."
          (forge-plugins-github-actions--render-log buf value steps)))
      :errorback
      (lambda (err &rest _)
-       (forge-plugins-github-actions--debug
-        "Failed to fetch logs for job %s: %S" job-id err)
+        (forge-plugins-log-error "github-actions"
+                                 "Failed to fetch logs for job %s: %S"
+                                 job-id err)
+        (forge-plugins-github-actions--debug
+         "Failed to fetch logs for job %s: %S" job-id err)
        (when (buffer-live-p buf)
          (with-current-buffer buf
            (let ((msg (or (and (listp err) (cdr (assq 'message err)))
@@ -963,8 +973,11 @@ against rendering into a dead buffer."
           (when (buffer-live-p buf) (funcall then))))
       :errorback
       (lambda (err &rest _)
-        (forge-plugins-github-actions--debug
-         "Failed to fetch step metadata for job %s: %S" job-id err)
+         (forge-plugins-log-error "github-actions"
+                                  "Failed to fetch step metadata for job %s: %S"
+                                  job-id err)
+         (forge-plugins-github-actions--debug
+          "Failed to fetch step metadata for job %s: %S" job-id err)
         (puthash job-id 'none forge-plugins-github-actions--steps-cache)
         (when (buffer-live-p buf) (funcall then))))))
 
@@ -1154,6 +1167,12 @@ request currently displayed."
 
 (when forge-plugins-github-actions-enable
   (forge-plugins-github-actions-enable))
+
+;;;###autoload
+(defun forge-plugins-github-actions-show-errors ()
+  "Pop to the GitHub Actions plugin error buffer."
+  (interactive)
+  (forge-plugins-log-show "github-actions"))
 
 (provide 'forge-plugins-github-actions)
 ;;; forge-plugins-github-actions.el ends here

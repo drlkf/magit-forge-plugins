@@ -42,6 +42,7 @@
 (require 'magit-status nil t)
 (require 'magit-section nil t)
 (require 'cl-lib)
+(require 'forge-plugins-log)
 
 (defconst forge-plugins-pullreq-approvals-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
@@ -361,8 +362,11 @@ REQUIRED the required approval count for the target branch."
        topic head-rev required
        (forge-plugins-pullreq-approvals--count-approved value)))
     :errorback
-    (lambda (err &rest _)
-      (forge-plugins-pullreq-approvals--debug
+     (lambda (err &rest _)
+       (forge-plugins-log-error "pullreq-approvals"
+                                "Failed to fetch reviews for topic %s: %S"
+                                (oref topic id) err)
+       (forge-plugins-pullreq-approvals--debug
        "Failed to fetch reviews for topic %s: %S" (oref topic id) err)
       (forge-plugins-pullreq-approvals--store-error topic head-rev))))
 
@@ -390,8 +394,11 @@ are fetched and the approvals are stored."
             (forge-plugins-pullreq-approvals--fetch-reviews
              topic head-rev required)))
         :errorback
-        (lambda (err &rest _)
-          (forge-plugins-pullreq-approvals--debug
+         (lambda (err &rest _)
+           (forge-plugins-log-error "pullreq-approvals"
+                                    "Failed to fetch branch rules for topic %s: %S"
+                                    (oref topic id) err)
+           (forge-plugins-pullreq-approvals--debug
            "Failed to fetch branch rules for topic %s: %S" (oref topic id) err)
           (forge-plugins-pullreq-approvals--store-error topic head-rev))))))
 
@@ -660,6 +667,12 @@ request currently displayed."
 
 (when forge-plugins-pullreq-approvals-enable
   (forge-plugins-pullreq-approvals-enable))
+
+;;;###autoload
+(defun forge-plugins-pullreq-approvals-show-errors ()
+  "Pop to the pull request approvals plugin error buffer."
+  (interactive)
+  (forge-plugins-log-show "pullreq-approvals"))
 
 (provide 'forge-plugins-pullreq-approvals)
 ;;; forge-plugins-pullreq-approvals.el ends here
