@@ -16,7 +16,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
       forge-plugins-pullreq-approvals-enable t
       forge-plugins-github-projects-enable t
       forge-plugins-github-reviews-enable t
-      forge-plugins-github-search-enable t)
+      forge-plugins-github-search-enable t
+      forge-plugins-github-teams-enable t)
 
 (forge-plugins-enable)
 ```
@@ -33,11 +34,32 @@ With `use-package`:
   (forge-plugins-github-projects-enable t)
   (forge-plugins-github-reviews-enable t)
   (forge-plugins-github-search-enable t)
+  (forge-plugins-github-teams-enable t)
   :config
   (forge-plugins-enable))
 ```
 
 # Plugins
+
+## GitHub Teams
+
+Include GitHub teams in Forge's pull-request review-request prompt. Existing
+team requests are read first so replacing the selection does not silently
+remove them. GitHub organization teams require a token with the `read:org`
+scope; without it, Forge falls back to its normal user-only behavior.
+
+**Flag:** `forge-plugins-github-teams-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+### Customization
+
+- `forge-plugins-github-teams-debug` -- Whether to enable diagnostic logging.
+- `forge-plugins-github-teams-refresh` -- Clear the cached teams for the
+  current repository when called interactively.
+
+Requested teams are written correctly but are not currently displayed in
+Forge's pull-request header.
 
 ## Topic Format
 
@@ -50,19 +72,22 @@ Customize the display of topic lines in `forge` topic and notification lists.
 ### Customization
 
 - `forge-plugins-topic-line-format` -- Format string for topic lines.
-Supported `%`-sequences:
+  Supported `%`-sequences:
 
 - `%R` -- repository slug, padded to `forge-topic-repository-slug-width`
+
 - `%s` -- topic slug (e.g., `#123`), padded
+
 - `%a` -- topic author login
+
 - `%t` -- topic title
 
 Default: `%R%s %t`
 
 - `forge-plugins-topic-slug-symbols` -- Alist mapping topic classes
-(`forge-issue`, `forge-pullreq`, `forge-discussion`) to prefix
-symbols.  When non-nil, the forge's leading character is replaced
-at display time.  Example:
+  (`forge-issue`, `forge-pullreq`, `forge-discussion`) to prefix
+  symbols. When non-nil, the forge's leading character is replaced
+  at display time. Example:
 
 ```elisp
 (setq forge-plugins-topic-slug-symbols
@@ -88,24 +113,24 @@ When enabling against a `forge` version other than the tested one below, a one-s
 ### Customization
 
 - `forge-plugins-github-actions-debug` -- Whether to enable debug logging.
-If non-nil, debug logs are written to the buffer `*forge-plugins-github-actions-debug*`.
+  If non-nil, debug logs are written to the buffer `*forge-plugins-github-actions-debug*`.
 
 - `forge-plugins-github-actions-max-concurrent-requests` -- Maximum number
-of check-run fetches to run concurrently (default `6`). Fetches are queued
-and dispatched as in-flight requests complete, so status for many pull
-requests is fetched in parallel without blocking Emacs or hammering the
-GitHub API.
+  of check-run fetches to run concurrently (default `6`). Fetches are queued
+  and dispatched as in-flight requests complete, so status for many pull
+  requests is fetched in parallel without blocking Emacs or hammering the
+  GitHub API.
 
 - `forge-plugins-github-actions-refresh-delay` -- Throttle window in seconds
-(default `0.3`) for applying fetched results to buffers. In topic-list
-buffers (Magit status, forge topics, notifications) the per-topic status
-badges are patched in place; every completion landing within one window is
-applied in a single section-tree walk and redisplay, so a burst of fetches
-on a large topic list is coalesced instead of triggering one update per
-result. Pull request topic buffers, which carry the full Actions section,
-are refreshed via `magit-refresh` the same way. Lower the value to update
-more eagerly, raise it to coalesce more aggressively. This keeps Emacs
-responsive on repositories with many topics.
+  (default `0.3`) for applying fetched results to buffers. In topic-list
+  buffers (Magit status, forge topics, notifications) the per-topic status
+  badges are patched in place; every completion landing within one window is
+  applied in a single section-tree walk and redisplay, so a burst of fetches
+  on a large topic list is coalesced instead of triggering one update per
+  result. Pull request topic buffers, which carry the full Actions section,
+  are refreshed via `magit-refresh` the same way. Lower the value to update
+  more eagerly, raise it to coalesce more aggressively. This keeps Emacs
+  responsive on repositories with many topics.
 
 ### Keybindings
 
@@ -162,23 +187,23 @@ The same summary is appended to a collapsible `Approvals` section (with `TAB`) i
 ### Customization
 
 - `forge-plugins-pullreq-approvals-debug` -- Whether to enable debug logging.
-If non-nil, debug logs are written to the buffer `*forge-plugins-pullreq-approvals-debug*`.
+  If non-nil, debug logs are written to the buffer `*forge-plugins-pullreq-approvals-debug*`.
 
 - `forge-plugins-pullreq-approvals-max-concurrent-requests` -- Maximum number
-of approvals fetches to run concurrently (default `6`). Fetches are queued and
-dispatched as in-flight requests complete, so status for many pull requests is
-fetched in parallel without blocking Emacs or hammering the GitHub API.
+  of approvals fetches to run concurrently (default `6`). Fetches are queued and
+  dispatched as in-flight requests complete, so status for many pull requests is
+  fetched in parallel without blocking Emacs or hammering the GitHub API.
 
 - `forge-plugins-pullreq-approvals-refresh-delay` -- Throttle window in
-seconds (default `0.3`) for applying fetched approvals to buffers. In
-topic-list buffers (Magit status, forge topics, notifications) the
-per-topic approvals badges are patched in place; every completion landing
-within one window is applied in a single section-tree walk and redisplay,
-so a burst of fetches on a large topic list is coalesced instead of
-triggering one update per result. Pull request topic buffers, which carry
-the full Approvals section, are refreshed via `magit-refresh` the same way.
-Lower the value to update more eagerly, raise it to coalesce more
-aggressively. This keeps Emacs responsive on repositories with many topics.
+  seconds (default `0.3`) for applying fetched approvals to buffers. In
+  topic-list buffers (Magit status, forge topics, notifications) the
+  per-topic approvals badges are patched in place; every completion landing
+  within one window is applied in a single section-tree walk and redisplay,
+  so a burst of fetches on a large topic list is coalesced instead of
+  triggering one update per result. Pull request topic buffers, which carry
+  the full Approvals section, are refreshed via `magit-refresh` the same way.
+  Lower the value to update more eagerly, raise it to coalesce more
+  aggressively. This keeps Emacs responsive on repositories with many topics.
 
 ### Keybindings
 
@@ -230,9 +255,9 @@ View name: Current Sprint RET
 The command:
 
 1. Picks any tracked GitHub repository to borrow authentication credentials from (no buffer context required).
-2. Resolves the project by owner + number using the GraphQL `organization` root field, with an automatic fallback to `user` when the owner is not an org login.  Pass a non-nil `user-owner-p` argument from Lisp to skip the org attempt.
-3. Fetches the project's views and finds the named one (case-insensitive match).
-4. Parses the view's server-side filter string and builds a local predicate applied before bucketing items into columns.
+1. Resolves the project by owner + number using the GraphQL `organization` root field, with an automatic fallback to `user` when the owner is not an org login. Pass a non-nil `user-owner-p` argument from Lisp to skip the org attempt.
+1. Fetches the project's views and finds the named one (case-insensitive match).
+1. Parses the view's server-side filter string and builds a local predicate applied before bucketing items into columns.
 
 The resulting buffer is identical to the one opened by `forge-plugins-github-projects` — same mode, same `g` to refresh, same `RET`/`b` to open a card — but shows only items matching the view filter.
 
@@ -247,7 +272,7 @@ The parser handles the subset of the GitHub Projects filter syntax that drives b
 | `is:issue` / `-is:pr` | Keep only Issues and Draft Issues (drop Pull Requests) |
 | `is:pr` / `-is:issue` | Keep only Pull Requests |
 
-Multi-word status values are quoted in the filter string (e.g. `"In progress"`); the parser strips the quotes and compares case-insensitively.  Unsupported tokens (`no:`, `label:`, date ranges, OR-groups) are silently ignored.
+Multi-word status values are quoted in the filter string (e.g. `"In progress"`); the parser strips the quotes and compares case-insensitively. Unsupported tokens (`no:`, `label:`, date ranges, OR-groups) are silently ignored.
 
 ### Token scope
 

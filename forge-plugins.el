@@ -38,6 +38,7 @@
 (require 'forge-plugins-github-projects)
 (require 'forge-plugins-github-reviews)
 (require 'forge-plugins-github-search)
+(require 'forge-plugins-github-teams)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
@@ -56,7 +57,9 @@
   (when forge-plugins-github-reviews-enable
     (forge-plugins-github-reviews-enable))
   (when forge-plugins-github-search-enable
-    (forge-plugins-github-search-enable)))
+    (forge-plugins-github-search-enable))
+  (when forge-plugins-github-teams-enable
+    (forge-plugins-github-teams-enable)))
 
 (provide 'forge-plugins)
 ;;; forge-plugins.el ends here
