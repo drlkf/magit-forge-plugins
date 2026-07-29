@@ -296,9 +296,9 @@ In an issue or pull request topic buffer:
 
 ## GitHub Reviews
 
-Integrate GitHub pull request **review threads** — the resolvable, inline code-comment conversations. `forge` models none of this, so everything is fetched and mutated through GitHub's GraphQL API. This is distinct from the [Pull Request Approvals](#pull-request-approvals) plugin, which tracks review *submissions* (`APPROVED`/`CHANGES_REQUESTED`).
+Integrate GitHub pull request **reviews and review threads** — review submissions (including their bodies) and resolvable, inline code-comment conversations. `forge` models none of this, so everything is fetched and mutated through GitHub's GraphQL API. This is distinct from the [Pull Request Approvals](#pull-request-approvals) plugin, which tracks review states (`APPROVED`/`CHANGES_REQUESTED`).
 
-Pull request topic lines (in topic/notification lists and the Magit status buffer) and the pull request topic view gain a `{x}` badge, where `x` is the number of **unresolved** review threads (threads whose `isResolved` is false). The badge is faced with `forge-plugins-github-reviews-unresolved` (yellow) and is hidden entirely when every thread is resolved or the pull request has no review threads. The curly-brace form `{x}` distinguishes it from the approvals indicator `<x/y>` and the GitHub Actions indicator `(x/y)`.
+Pull request topic lines (in topic/notification lists and the Magit status buffer) and the pull request topic view gain a `{x}` badge, where `x` is the number of **unresolved** review threads (threads whose `isResolved` is false). Review submissions do not affect this badge. The badge is faced with `forge-plugins-github-reviews-unresolved` (yellow) and is hidden entirely when every thread is resolved or the pull request has no review threads. The curly-brace form `{x}` distinguishes it from the approvals indicator `<x/y>` and the GitHub Actions indicator `(x/y)`.
 
 Queries and mutations are raw GraphQL POSTed to the `/graphql` endpoint via `ghub-request` (the same primitive `forge` uses), authenticated with `:auth 'forge`, so the repository's existing token and host are reused. Badge reads are asynchronous, queued and cached the same way as the approvals plugin, so opening a topic never blocks on the network; the interaction commands run synchronously in response to a keypress, then invalidate the cache and refresh.
 
@@ -308,7 +308,7 @@ Queries and mutations are raw GraphQL POSTed to the `/graphql` endpoint via `ghu
 
 ### Reviews section
 
-In `forge-pullreq-mode` a collapsible `Reviews` section (with `TAB`) is inserted directly before the pull request description. Its heading carries the same `{x}` badge, and its body lists each review thread as a nested collapsible section headed `path:line [unresolved]` (or `[resolved]`, dimmed and collapsed by default) with a comment count. Each comment line shows its author and the first line of its body; `RET` on a comment visits the commented-on file at its line in the pull request's local worktree, and `b` opens the comment on GitHub.
+In `forge-pullreq-mode` a collapsible `Reviews` section (with `TAB`) is inserted directly before the pull request description. Its heading carries the same `{x}` badge. The body lists non-empty review submissions as collapsible entries headed `login [state]`, followed by their full body text; `b` opens a review on GitHub. Reviews without a body are omitted. Review submissions are currently read-only. Review threads remain nested collapsible sections headed `path:line [unresolved]` (or `[resolved]`, dimmed and collapsed by default) with a comment count. Each comment line shows its author and the first line of its body; `RET` visits the commented-on file and `b` opens the comment on GitHub.
 
 ### Keybindings
 

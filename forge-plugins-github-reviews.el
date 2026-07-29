@@ -29,8 +29,8 @@
 ;; where X is the number of unresolved review threads.  The badge is
 ;; hidden when everything is resolved or there are no threads.
 ;;
-;; In `forge-pullreq-mode' a collapsible `Reviews' section lists each
-;; review thread (path, line, resolved state) and its comments.  A `v'
+;; In `forge-pullreq-mode' a collapsible `Reviews' section lists review
+;; submissions with bodies, review threads, and their comments.  A `v'
 ;; prefix keymap acts on the thread or comment at point: reply to a
 ;; thread (`v c'), edit your own comment (`v e'), add a reaction
 ;; (`v @'), resolve/unresolve the thread (`v r') and refresh (`v g').
@@ -127,6 +127,7 @@ Values are plists:
 - `:head-rev': the head-rev for which this status was fetched.
 - `:threads': list of thread plists (see
   `forge-plugins-github-reviews--parse').
+- `:reviews': review submissions with non-empty bodies.
 - `:unresolved': number of unresolved review threads.
 - `:fetching': boolean, whether a fetch is in progress.
 - `:error': boolean, whether the last fetch failed.")
@@ -137,13 +138,16 @@ Values are plists:
   "query($owner:String!,$name:String!,$number:Int!){
      repository(owner:$owner,name:$name){
        pullRequest(number:$number){
-         reviewThreads(first:100){
+          reviewThreads(first:100){
            nodes{
              id isResolved isOutdated path line
              comments(first:100){
                nodes{ id author{ login } body url viewerDidAuthor }
-             }
-           }
+            }
+          }
+          reviews(first:100){
+            nodes{ id author{ login } body state url }
+          }
          }
        }
      }
@@ -193,12 +197,14 @@ own requests."
           (cons 'number (oref topic number)))))
 
 (defun forge-plugins-github-reviews--parse (data)
-  "Parse review-thread response DATA into (THREADS . UNRESOLVED).
+  "Parse review response DATA into a plist.
 THREADS is a list of plists, each with `:id', `:resolved',
 `:outdated', `:path', `:line' and `:comments' (a list of plists with
 `:id', `:login', `:body', `:url' and `:viewer').  UNRESOLVED is the
-number of threads whose `:resolved' is nil."
+number of threads whose `:resolved' is nil.  Reviews contains only
+review submissions with non-empty bodies."
   (let* ((nodes (let-alist data .repository.pullRequest.reviewThreads.nodes))
+         (review-nodes (let-alist data .repository.pullRequest.reviews.nodes))
          (threads
           (mapcar
            (lambda (tn)
@@ -217,8 +223,18 @@ number of threads whose `:resolved' is nil."
                             :viewer (eq (alist-get 'viewerDidAuthor cn) t)))
                     (alist-get 'nodes (alist-get 'comments tn)))))
            nodes)))
-    (cons threads
-          (cl-count-if-not (lambda (th) (plist-get th :resolved)) threads))))
+    (list :threads threads
+          :unresolved (cl-count-if-not
+                       (lambda (th) (plist-get th :resolved)) threads)
+          :reviews
+          (cl-loop for review in review-nodes
+                   for body = (alist-get 'body review)
+                   when (and body (not (string-empty-p body)))
+                   collect (list :id (alist-get 'id review)
+                                 :login (alist-get 'login (alist-get 'author review))
+                                 :body body
+                                 :state (alist-get 'state review)
+                                 :url (alist-get 'url review))))))
 
 ;;;; Refresh and in-place badge patching (mirrors the approvals plugin)
 
@@ -367,8 +383,9 @@ HEAD-REV is the head-rev the fetch was performed against."
   (let ((parsed (forge-plugins-github-reviews--parse data)))
     (puthash (oref topic id)
              (list :head-rev head-rev
-                   :threads (car parsed)
-                   :unresolved (cdr parsed)
+                   :threads (plist-get parsed :threads)
+                   :unresolved (plist-get parsed :unresolved)
+                   :reviews (plist-get parsed :reviews)
                    :fetching nil)
              forge-plugins-github-reviews--cache)
     (forge-plugins-github-reviews--debug
@@ -492,6 +509,10 @@ ORIG-FUN is `forge--insert-topic', called with TOPIC and WIDTH."
   "RET" #'forge-plugins-github-reviews-visit-file
   "b"   #'forge-plugins-github-reviews-browse)
 
+(defvar-keymap forge-plugins-github-reviews-review-map
+  :doc "Keymap on a review submission body."
+  "b" #'forge-plugins-github-reviews-browse)
+
 (defun forge-plugins-github-reviews-browse ()
   "Open the review comment at point in the browser."
   (interactive)
@@ -566,6 +587,31 @@ its comment plist and URL, plus the comment keymap."
                  'forge-plugins-github-reviews-url (plist-get c :url)
                  'keymap forge-plugins-github-reviews-line-map)))))))
 
+(defun forge-plugins-github-reviews--insert-review (review)
+  "Insert a collapsible section for a body-bearing review submission."
+  (let ((state (downcase (replace-regexp-in-string
+                          "_" " " (or (plist-get review :state) "unknown")))))
+    (magit-insert-section (forge-plugins-github-reviews-review review)
+      (let ((beg (point)))
+        (insert "  " (or (plist-get review :login) "?") " ")
+        (forge-plugins-github-reviews--insert-faced
+         (format "[%s]" state)
+         (if (equal (plist-get review :state) "APPROVED")
+             'forge-plugins-github-reviews-resolved
+           'forge-plugins-github-reviews-unresolved))
+        (add-text-properties
+         beg (point)
+         (list 'forge-plugins-github-reviews-url (plist-get review :url))))
+      (magit-insert-heading)
+      (dolist (line (split-string (plist-get review :body) "\n"))
+        (let ((beg (point)))
+          (insert "    " line "\n")
+          (add-text-properties
+           beg (point)
+           (list 'forge-plugins-github-reviews-url (plist-get review :url)
+                 'keymap forge-plugins-github-reviews-review-map))))
+      (insert "\n"))))
+
 (defun forge-plugins-github-reviews--insert-section (post &optional topic)
   "Insert a Reviews section as a sibling after the description post.
 This is `:before' advice for `forge-insert-post'.  POST and TOPIC are
@@ -594,7 +640,10 @@ GitHub pull request."
             (cond
              ((plist-get cached :error)
               (insert (magit--propertize-face "error" 'error) "\n"))
-             ((plist-get cached :threads)
+             ((or (plist-get cached :reviews)
+                  (plist-get cached :threads))
+              (dolist (review (plist-get cached :reviews))
+                (forge-plugins-github-reviews--insert-review review))
               (dolist (thread (plist-get cached :threads))
                 (forge-plugins-github-reviews--insert-thread thread)))
              (t (insert (magit--propertize-face "none" 'magit-dimmed) "\n"))))
@@ -634,8 +683,9 @@ command reacting to a keypress, so a short wait is acceptable."
                     (forge-plugins-github-reviews--variables topic)))
              (parsed (forge-plugins-github-reviews--parse data)))
         (setq cached (list :head-rev (oref topic head-rev)
-                           :threads (car parsed)
-                           :unresolved (cdr parsed)
+                           :threads (plist-get parsed :threads)
+                           :unresolved (plist-get parsed :unresolved)
+                           :reviews (plist-get parsed :reviews)
                            :fetching nil))
         (puthash (oref topic id) cached
                  forge-plugins-github-reviews--cache)))
