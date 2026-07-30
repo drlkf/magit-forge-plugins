@@ -140,19 +140,19 @@ Values are plists:
      repository(owner:$owner,name:$name){
        pullRequest(number:$number){
           reviewThreads(first:100){
-           nodes{
-             id isResolved isOutdated path line
-             comments(first:100){
-               nodes{ id author{ login } body url viewerDidAuthor }
+            nodes{
+              id isResolved isOutdated path line
+              comments(first:100){
+                nodes{ id author{ login } body url viewerDidAuthor }
+              }
             }
           }
           reviews(first:100){
             nodes{ id author{ login } body state url }
           }
-         }
-       }
-     }
-   }"
+          }
+        }
+      }"
   "GraphQL query fetching a pull request's review threads and comments.")
 
 (defun forge-plugins-github-reviews--errors (body)
@@ -176,16 +176,16 @@ own requests."
           :payload payload :auth 'forge :host (oref repo apihost) :forge 'github
           :callback
           (lambda (body _headers _status _req)
-             (if-let ((msg (forge-plugins-github-reviews--errors body)))
-                 (progn
-                   (forge-plugins-log-error "github-reviews" "%s" msg)
-                   (when errorback (funcall errorback msg)))
+            (if-let ((msg (forge-plugins-github-reviews--errors body)))
+                (progn
+                  (forge-plugins-log-error "github-reviews" "%s" msg)
+                  (when errorback (funcall errorback msg)))
               (funcall callback (alist-get 'data body))))
           :errorback
-           (lambda (err _headers _status _req)
-             (let ((msg (format "%S" err)))
-               (forge-plugins-log-error "github-reviews" "%s" msg)
-               (when errorback (funcall errorback msg)))))
+          (lambda (err _headers _status _req)
+            (let ((msg (format "%S" err)))
+              (forge-plugins-log-error "github-reviews" "%s" msg)
+              (when errorback (funcall errorback msg)))))
       (let* ((body (ghub-request "POST" "/graphql" nil
                      :payload payload :auth 'forge
                      :host (oref repo apihost) :forge 'github))

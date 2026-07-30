@@ -70,10 +70,14 @@ scope; without it, Forge falls back to its normal user-only behavior.
 ### Customization
 
 - `forge-plugins-github-teams-debug` -- Whether to enable diagnostic logging.
+- `forge-plugins-github-teams-ttl` -- Seconds to cache requested teams in
+  pull-request buffers (default `300`).
 - `forge-plugins-github-teams-refresh` -- Clear the cached teams for the
   current repository when called interactively.
 
-Requested teams are written correctly but are not currently displayed in
+If the team list cannot be fetched, the plugin falls back to Forge's
+user-only prompt and displays a one-shot message suggesting the token may
+need the `read:org` scope. Team requests are displayed asynchronously in
 Forge's pull-request header.
 
 ## Topic Format
