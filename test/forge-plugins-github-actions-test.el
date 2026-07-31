@@ -11,6 +11,25 @@
 (require 'forge)
 (require 'forge-pullreq)
 (require 'forge-plugins-github-actions)
+(require 'forge-plugins-log)
+
+(ert-deftest forge-plugins-github-actions-test-rerun-url ()
+  "Build the Actions job rerun endpoint from a job URL."
+  (should (equal
+           (forge-plugins-github-actions--rerun-url
+            '((html_url . "https://github.com/o/r/actions/runs/12/job/34")))
+           "/repos/:owner/:repo/actions/jobs/34/rerun")))
+
+(ert-deftest forge-plugins-github-actions-test-rerun-url-without-job ()
+  "Do not build a rerun endpoint when no job ID is available."
+  (should-not (forge-plugins-github-actions--rerun-url '((id . 34)))))
+
+(ert-deftest forge-plugins-log-test-error-message ()
+  "Extract the API message from a ghub HTTP error."
+  (should (equal
+           (forge-plugins-log-error-message
+            '(error http 403 ((message . "Forbidden"))))
+           "Forbidden")))
 
 (ert-deftest forge-plugins-github-actions-test-forge-api-surface ()
   "The forge symbols and slots the plugin relies on must exist."

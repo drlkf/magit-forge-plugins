@@ -159,6 +159,9 @@ When inside a pull request topic view, the following keybindings are available o
 - `b` -- Open the action's logs in your browser.
 - `R` -- Trigger a re-run of the action.
 
+Re-runs use GitHub's Actions job endpoint and therefore apply only to GitHub
+Actions jobs, not check runs created by other GitHub Apps.
+
 In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mode`, the following keybinding is available buffer-wide:
 
 - `C-c C-a` -- Refresh the GitHub Actions status, forcing a fresh fetch from the forge. In a pull request buffer this refreshes that pull request; in a status buffer it refreshes every GitHub pull request currently displayed. Unlike magit's `g` (`magit-refresh`), which reuses the cached status as long as the head revision is unchanged, this bypasses the cache and re-fetches the check runs.

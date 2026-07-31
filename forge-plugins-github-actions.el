@@ -364,11 +364,11 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
           (forge-plugins-github-actions--fetch-done)
           (forge-plugins-github-actions--note-pending topic)))
       :errorback
-       (lambda (err _headers _status _req)
-         (forge-plugins-log-error "github-actions"
-                                  "Failed to fetch check runs for topic %s: %S"
-                                  id err)
-         (forge-plugins-github-actions--debug
+      (lambda (err _headers _status _req)
+        (forge-plugins-log-error "github-actions"
+                                 "Failed to fetch check runs for topic %s: %S"
+                                 id err)
+        (forge-plugins-github-actions--debug
          "Failed to fetch check runs for topic %s: %S" id err)
         (puthash id
                  (list :head-rev head-rev
@@ -587,6 +587,14 @@ and UNPAGINATE are as in `forge--rest'."
       (let ((id (alist-get 'id run)))
         (and id (number-to-string id))))))
 
+(defun forge-plugins-github-actions--rerun-url (run)
+  "Return the Actions job rerun URL for RUN, or nil if unavailable."
+  (when (and (alist-get 'html_url run)
+             (string-match "/actions/runs/[0-9]+/job/[0-9]+"
+                           (alist-get 'html_url run)))
+    (format "/repos/:owner/:repo/actions/jobs/%s/rerun"
+            (forge-plugins-github-actions--extract-job-id run))))
+
 (defun forge-plugins-github-actions--run-app (run)
   "Return the GitHub App alist of the check run RUN, or nil.
 The alist carries the app's `id', `slug' and `name', so downstream
@@ -626,15 +634,12 @@ section line in any magit or forge buffer, retries that run."
          (topic (if in-log
                     forge-plugins-github-actions--log-topic
                   forge-buffer-topic))
-         (repo (forge-get-repository topic))
-         (owner (oref repo owner))
-         (name (oref repo name))
-         (run-id (alist-get 'id run))
          (run-name (alist-get 'name run))
-         (url (format "/repos/%s/%s/check-runs/%s/rerequest" owner name run-id)))
+         (url (or (forge-plugins-github-actions--rerun-url run)
+                  (user-error "No GitHub Actions job found to re-run"))))
     (message "Requesting re-run of %s..." run-name)
     (forge-plugins-github-actions--debug
-     "Requesting re-run of check run %s (ID: %s)" run-name run-id)
+     "Requesting re-run of action job %s" run-name)
     (forge-rest topic "POST" url nil
       :callback
       (lambda (&rest _)
@@ -651,12 +656,12 @@ section line in any magit or forge buffer, retries that run."
         (run-with-timer
          2 nil #'forge-plugins-github-actions--enqueue topic))
       :errorback
-       (lambda (err &rest _)
-         (let ((msg (or (alist-get 'message err) "Unknown error")))
-           (forge-plugins-log-error "github-actions"
-                                    "Failed to request re-run of %s: %s"
-                                    run-name msg)
-           (message "Failed to re-run %s: %s" run-name msg)
+      (lambda (err &rest _)
+        (let ((msg (forge-plugins-log-error-message err)))
+          (forge-plugins-log-error "github-actions"
+                                   "Failed to request re-run of %s: %s"
+                                   run-name msg)
+          (message "Failed to re-run %s: %s" run-name msg)
           (forge-plugins-github-actions--debug
            "Failed to request re-run of check run %s: %S" run-name err))))))
 
@@ -940,16 +945,14 @@ beforehand by `forge-plugins-github-actions--log-fetch-and-display'."
          (forge-plugins-github-actions--render-log buf value steps)))
      :errorback
      (lambda (err &rest _)
-        (forge-plugins-log-error "github-actions"
-                                 "Failed to fetch logs for job %s: %S"
-                                 job-id err)
-        (forge-plugins-github-actions--debug
-         "Failed to fetch logs for job %s: %S" job-id err)
+       (forge-plugins-log-error "github-actions"
+                                "Failed to fetch logs for job %s: %S"
+                                job-id err)
+       (forge-plugins-github-actions--debug
+        "Failed to fetch logs for job %s: %S" job-id err)
        (when (buffer-live-p buf)
          (with-current-buffer buf
-           (let ((msg (or (and (listp err) (cdr (assq 'message err)))
-                          (and (listp err) (cdr (assq 'error err)))
-                          (and (stringp err) err))))
+           (let ((msg (forge-plugins-log-error-message err)))
              (forge-plugins-github-actions--log-insert-message
               (if msg
                   (concat "Failed to fetch logs.\n" "Error: " msg "\n")
@@ -973,11 +976,11 @@ against rendering into a dead buffer."
           (when (buffer-live-p buf) (funcall then))))
       :errorback
       (lambda (err &rest _)
-         (forge-plugins-log-error "github-actions"
-                                  "Failed to fetch step metadata for job %s: %S"
-                                  job-id err)
-         (forge-plugins-github-actions--debug
-          "Failed to fetch step metadata for job %s: %S" job-id err)
+        (forge-plugins-log-error "github-actions"
+                                 "Failed to fetch step metadata for job %s: %S"
+                                 job-id err)
+        (forge-plugins-github-actions--debug
+         "Failed to fetch step metadata for job %s: %S" job-id err)
         (puthash job-id 'none forge-plugins-github-actions--steps-cache)
         (when (buffer-live-p buf) (funcall then))))))
 

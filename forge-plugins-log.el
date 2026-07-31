@@ -2,6 +2,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+
 (defun forge-plugins-log-buffer-name (plugin)
   "Return the error buffer name for PLUGIN."
   (format "*forge-plugins-%s-errors*" plugin))
@@ -17,6 +19,17 @@
         (insert (format-time-string "[%Y-%m-%d %H:%M:%S] "))
         (insert (apply #'format format-string args))
         (insert "\n")))))
+
+(defun forge-plugins-log-error-message (error)
+  "Return a readable message from a Ghub ERROR value."
+  (or (and (stringp error) error)
+      (and (listp error)
+           (alist-get 'message
+                      (cl-find-if (lambda (value)
+                                    (and (listp value)
+                                         (alist-get 'message value)))
+                                  (reverse error))))
+      (format "%S" error)))
 
 ;;;###autoload
 (defun forge-plugins-log-show (plugin)
