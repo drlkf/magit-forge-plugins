@@ -277,7 +277,7 @@ View name: Current Sprint RET
 The command:
 
 1. Picks any tracked GitHub repository to borrow authentication credentials from (no buffer context required).
-1. Resolves the project by owner + number using the GraphQL `organization` root field, with an automatic fallback to `user` when the owner is not an org login. Pass a non-nil `user-owner-p` argument from Lisp to skip the org attempt.
+1. Resolves the project by owner + number using GitHub's shared GraphQL `repositoryOwner` root field, which supports both organization and user projects.
 1. Fetches the project's views and finds the named one (case-insensitive match).
 1. Parses the view's server-side filter string and builds a local predicate applied before bucketing items into columns.
 

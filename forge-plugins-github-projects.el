@@ -117,13 +117,13 @@ field: a project's number is scoped to its owning org or user, so a
 repo-linked org project does not resolve under `repository.projectV2'.")
 
 (defconst forge-plugins-github-projects--resolve-project-query
-  "query($o:String!,$n:Int!){
-     org:  organization(login:$o){ projectV2(number:$n){ id } }
-     user: user(login:$o){ projectV2(number:$n){ id } }
-   }"
-  "GraphQL query resolving an org-or-user project number to its node ID.
-Both root fields are queried in one round-trip; for any given login exactly
-one returns non-null (GitHub shares the user/org namespace).")
+   "query($o:String!,$n:Int!){
+      repositoryOwner(login:$o){
+        ... on Organization{ projectV2(number:$n){ id } }
+        ... on User{ projectV2(number:$n){ id } }
+      }
+    }"
+   "GraphQL query resolving an org-or-user project number to its node ID.")
 
 (defconst forge-plugins-github-projects--views-query
   "query($id:ID!){
@@ -198,15 +198,14 @@ opened from an arbitrary buffer) but we still need GitHub credentials."
                 (forge--ls-repos))
       (user-error "No tracked GitHub repository to authenticate with")))
 
-(defun forge-plugins-github-projects--resolve-project (repo owner number user-owner-p)
+(defun forge-plugins-github-projects--resolve-project (repo owner number)
   "Resolve OWNER's project NUMBER to its ProjectV2 node ID via REPO's auth.
-Tries the organization root field first unless USER-OWNER-P is non-nil,
-then falls back to the user root field.  Signals `user-error' if not found."
+ Uses GitHub's shared `repositoryOwner' root field.  Signals `user-error'
+ if not found."
   (let* ((data (forge-plugins-github-projects--graphql
                 repo forge-plugins-github-projects--resolve-project-query
                 (list (cons 'o owner) (cons 'n number))))
-         (id (or (and (not user-owner-p) (let-alist data .org.projectV2.id))
-                 (let-alist data .user.projectV2.id))))
+          (id (let-alist data .repositoryOwner.projectV2.id)))
     (or id (user-error "Project #%d not found for %s" number owner))))
 
 (defun forge-plugins-github-projects--view-filter (repo project-id view-name)
@@ -754,21 +753,17 @@ projects.  Bound to \\`p r' in topic buffers."
   "r" #'forge-plugins-github-projects-remove)
 
 ;;;###autoload
-(defun forge-plugins-github-projects-browse-view (owner number view-name
-                                                        &optional user-owner-p)
+(defun forge-plugins-github-projects-browse-view (owner number view-name)
   "Open a filtered board for OWNER's project NUMBER, showing only VIEW-NAME items.
 VIEW-NAME is matched case-insensitively against the project's views; the
 view's server-side filter string is parsed and applied locally so the board
 shows only matching items.
-With optional USER-OWNER-P non-nil, OWNER is a user account; otherwise an
-organization login is tried first (auto-fallback to user if null).
-Requires the plugin to be enabled."
+ Requires the plugin to be enabled."
   (interactive "sOwner: \nnProject number: \nsView name: ")
   (unless forge-plugins-github-projects-enable
     (user-error "The GitHub Projects plugin is disabled"))
   (let* ((repo (forge-plugins-github-projects--any-repository))
-         (id (forge-plugins-github-projects--resolve-project
-              repo owner number user-owner-p))
+          (id (forge-plugins-github-projects--resolve-project repo owner number))
          (filter-str (forge-plugins-github-projects--view-filter repo id view-name))
          (pred (unless (string-empty-p filter-str)
                  (forge-plugins-github-projects--filter-predicate

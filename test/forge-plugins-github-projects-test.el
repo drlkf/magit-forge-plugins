@@ -46,8 +46,18 @@ sending them as gsexp produces malformed GraphQL that GitHub rejects."
   ;; The membership template carries the inline fragment that broke gsexp.
   (should (string-match-p "\\.\\.\\. on ProjectV2ItemFieldSingleSelectValue"
                           forge-plugins-github-projects--membership-query-template))
-  (should (string-match-p "pullRequest"
-                          (forge-plugins-github-projects--membership-query nil))))
+   (should (string-match-p "pullRequest"
+                           (forge-plugins-github-projects--membership-query nil))))
+
+(ert-deftest forge-plugins-github-projects-test-resolves-repository-owner ()
+  "Resolve project IDs from the shared `repositoryOwner' response shape."
+  (cl-letf (((symbol-function 'forge-plugins-github-projects--graphql)
+             (lambda (&rest _)
+               '((repositoryOwner
+                  (projectV2 (id . "PVT_1")))))))
+    (should (equal
+             (forge-plugins-github-projects--resolve-project nil "tsuga-dev" 1)
+             "PVT_1"))))
 
 (ert-deftest forge-plugins-github-projects-test-membership-extraction ()
   "Membership response extraction must match the query's response shape.
