@@ -248,10 +248,11 @@ review submissions with non-empty bodies."
 Only `forge-pullreq-mode' buffers are fully refreshed, because that is
 the only mode carrying the Reviews section.  Topic-list buffers have
 their per-topic badge patched in place instead."
-  (dolist (buf (buffer-list))
-    (with-current-buffer buf
-      (when (derived-mode-p 'forge-pullreq-mode)
-        (magit-refresh-buffer)))))
+  (unless (active-minibuffer-window)
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (derived-mode-p 'forge-pullreq-mode)
+          (magit-refresh-buffer))))))
 
 (defvar forge-plugins-github-reviews--refresh-timer nil
   "Pending timer used to coalesce pull request buffer refreshes.")
@@ -305,25 +306,29 @@ Keys are topic IDs, values the topics.")
 
 (defun forge-plugins-github-reviews--flush ()
   "Patch every pending topic's badge in one pass per list buffer."
-  (setq forge-plugins-github-reviews--flush-timer nil)
-  (let ((batch forge-plugins-github-reviews--pending))
-    (setq forge-plugins-github-reviews--pending (make-hash-table :test 'equal))
-    (dolist (buf (buffer-list))
-      (with-current-buffer buf
-        (when (and (or (derived-mode-p 'forge-topics-mode)
-                       (derived-mode-p 'magit-status-mode)
-                       (derived-mode-p 'forge-notifications-mode))
-                   (bound-and-true-p magit-root-section))
-          (letrec ((walk
-                    (lambda (section)
-                      (let ((value (oref section value)))
-                        (when (forge-pullreq-p value)
-                          (when-let ((topic (gethash (oref value id) batch)))
-                            (forge-plugins-github-reviews--patch-line-badge
-                             section topic))))
-                      (dolist (child (oref section children))
-                        (funcall walk child)))))
-            (funcall walk magit-root-section)))))))
+  (if (active-minibuffer-window)
+      (setq forge-plugins-github-reviews--flush-timer
+            (run-with-timer forge-plugins-github-reviews-refresh-delay
+                            nil #'forge-plugins-github-reviews--flush))
+    (setq forge-plugins-github-reviews--flush-timer nil)
+    (let ((batch forge-plugins-github-reviews--pending))
+      (setq forge-plugins-github-reviews--pending (make-hash-table :test 'equal))
+      (dolist (buf (buffer-list))
+        (with-current-buffer buf
+          (when (and (or (derived-mode-p 'forge-topics-mode)
+                         (derived-mode-p 'magit-status-mode)
+                         (derived-mode-p 'forge-notifications-mode))
+                     (bound-and-true-p magit-root-section))
+            (letrec ((walk
+                      (lambda (section)
+                        (let ((value (oref section value)))
+                          (when (forge-pullreq-p value)
+                            (when-let ((topic (gethash (oref value id) batch)))
+                              (forge-plugins-github-reviews--patch-line-badge
+                               section topic))))
+                        (dolist (child (oref section children))
+                          (funcall walk child)))))
+              (funcall walk magit-root-section))))))))
 
 (defun forge-plugins-github-reviews--note-pending (topic)
   "Queue TOPIC for a throttled in-place badge patch, then a refresh."

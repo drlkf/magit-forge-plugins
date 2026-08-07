@@ -130,10 +130,11 @@ is the only mode carrying the Approvals section.  Topic-list buffers
 have their per-topic approvals badge patched in place by
 `forge-plugins-pullreq-approvals--flush' instead, so they never incur
 a full re-render."
-  (dolist (buf (buffer-list))
-    (with-current-buffer buf
-      (when (derived-mode-p 'forge-pullreq-mode)
-        (magit-refresh-buffer)))))
+  (unless (active-minibuffer-window)
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (derived-mode-p 'forge-pullreq-mode)
+          (magit-refresh-buffer))))))
 
 (defvar forge-plugins-pullreq-approvals--refresh-timer nil
   "Pending timer used to coalesce pull request buffer refreshes.")
@@ -362,11 +363,11 @@ REQUIRED the required approval count for the target branch."
        topic head-rev required
        (forge-plugins-pullreq-approvals--count-approved value)))
     :errorback
-     (lambda (err &rest _)
-       (forge-plugins-log-error "pullreq-approvals"
-                                "Failed to fetch reviews for topic %s: %S"
-                                (oref topic id) err)
-       (forge-plugins-pullreq-approvals--debug
+    (lambda (err &rest _)
+      (forge-plugins-log-error "pullreq-approvals"
+                               "Failed to fetch reviews for topic %s: %S"
+                               (oref topic id) err)
+      (forge-plugins-pullreq-approvals--debug
        "Failed to fetch reviews for topic %s: %S" (oref topic id) err)
       (forge-plugins-pullreq-approvals--store-error topic head-rev))))
 
@@ -394,11 +395,11 @@ are fetched and the approvals are stored."
             (forge-plugins-pullreq-approvals--fetch-reviews
              topic head-rev required)))
         :errorback
-         (lambda (err &rest _)
-           (forge-plugins-log-error "pullreq-approvals"
-                                    "Failed to fetch branch rules for topic %s: %S"
-                                    (oref topic id) err)
-           (forge-plugins-pullreq-approvals--debug
+        (lambda (err &rest _)
+          (forge-plugins-log-error "pullreq-approvals"
+                                   "Failed to fetch branch rules for topic %s: %S"
+                                   (oref topic id) err)
+          (forge-plugins-pullreq-approvals--debug
            "Failed to fetch branch rules for topic %s: %S" (oref topic id) err)
           (forge-plugins-pullreq-approvals--store-error topic head-rev))))))
 
