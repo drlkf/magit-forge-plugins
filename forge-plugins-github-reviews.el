@@ -135,6 +135,10 @@ Values are plists:
 
 ;;;; GraphQL
 
+(defconst forge-plugins-github-reviews--decision-states
+  '("APPROVED" "CHANGES_REQUESTED" "DISMISSED")
+  "Review states worth displaying without a body.")
+
 (defconst forge-plugins-github-reviews--query
   "query($owner:String!,$name:String!,$number:Int!){
      repository(owner:$owner,name:$name){
@@ -206,8 +210,8 @@ own requests."
 THREADS is a list of plists, each with `:id', `:resolved',
 `:outdated', `:path', `:line' and `:comments' (a list of plists with
 `:id', `:login', `:body', `:url' and `:viewer').  UNRESOLVED is the
-number of threads whose `:resolved' is nil.  Reviews contains only
-review submissions with non-empty bodies."
+ number of threads whose `:resolved' is nil.  Reviews contains
+ body-bearing submissions and decision reviews."
   (let* ((nodes (let-alist data .repository.pullRequest.reviewThreads.nodes))
          (review-nodes (let-alist data .repository.pullRequest.reviews.nodes))
          (threads
@@ -234,7 +238,9 @@ review submissions with non-empty bodies."
           :reviews
           (cl-loop for review in review-nodes
                    for body = (alist-get 'body review)
-                   when (and body (not (string-empty-p body)))
+                   for state = (alist-get 'state review)
+                   when (or (and body (not (string-empty-p body)))
+                            (member state forge-plugins-github-reviews--decision-states))
                    collect (list :id (alist-get 'id review)
                                  :login (alist-get 'login (alist-get 'author review))
                                  :body body
@@ -399,7 +405,8 @@ HEAD-REV is the head-rev the fetch was performed against."
                    :fetching nil)
              forge-plugins-github-reviews--cache)
     (forge-plugins-github-reviews--debug
-     "Stored reviews for topic %s: unresolved=%s" (oref topic id) (cdr parsed)))
+     "Stored reviews for topic %s: unresolved=%s"
+     (oref topic id) (plist-get parsed :unresolved)))
   (forge-plugins-github-reviews--fetch-done)
   (forge-plugins-github-reviews--note-pending topic))
 
@@ -613,13 +620,14 @@ its comment plist and URL, plus the comment keymap."
          beg (point)
          (list 'forge-plugins-github-reviews-url (plist-get review :url))))
       (magit-insert-heading)
-      (dolist (line (split-string (plist-get review :body) "\n"))
-        (let ((beg (point)))
-          (insert "    " line "\n")
-          (add-text-properties
-           beg (point)
-           (list 'forge-plugins-github-reviews-url (plist-get review :url)
-                 'keymap forge-plugins-github-reviews-review-map))))
+      (when-let ((body (plist-get review :body)))
+        (dolist (line (split-string body "\n"))
+          (let ((beg (point)))
+            (insert "    " line "\n")
+            (add-text-properties
+             beg (point)
+             (list 'forge-plugins-github-reviews-url (plist-get review :url)
+                   'keymap forge-plugins-github-reviews-review-map)))))
       (insert "\n"))))
 
 (defun forge-plugins-github-reviews--insert-section (post &optional topic)

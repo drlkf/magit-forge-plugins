@@ -20,7 +20,7 @@
       (kill-buffer buffer))))
 
 (ert-deftest forge-plugins-github-reviews-test-parse-review-bodies ()
-  "Parse review bodies while dropping reviews without a body."
+  "Keep decision reviews without bodies while dropping empty comments."
   (let* ((data '((repository . ((pullRequest .
                                              ((reviewThreads . ((nodes . nil)))
                                               (reviews . ((nodes .
@@ -32,10 +32,14 @@
                                                                   ((id . "review-2")
                                                                    (author . ((login . "bob")))
                                                                    (body . "")
-                                                                   (state . "APPROVED"))))))))))))
+                                                                   (state . "APPROVED"))
+                                                                  ((id . "review-3")
+                                                                   (author . ((login . "carol")))
+                                                                   (body . "")
+                                                                   (state . "COMMENTED"))))))))))))
          (parsed (forge-plugins-github-reviews--parse data)))
     (should (= 0 (plist-get parsed :unresolved)))
-    (should (= 1 (length (plist-get parsed :reviews))))
+    (should (= 2 (length (plist-get parsed :reviews))))
     (should (equal "Looks good"
                    (plist-get (car (plist-get parsed :reviews)) :body)))))
 

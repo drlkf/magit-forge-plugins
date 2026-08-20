@@ -361,7 +361,7 @@ Queries and mutations are raw GraphQL POSTed to the `/graphql` endpoint via `ghu
 
 ### Reviews section
 
-In `forge-pullreq-mode` a collapsible `Reviews` section (with `TAB`) is inserted directly before the pull request description. Its heading carries the same `{x}` badge. The body lists non-empty review submissions as collapsible entries headed `login [state]`, followed by their full body text; `b` opens a review on GitHub. Reviews without a body are omitted. Review submissions are currently read-only. Review threads remain nested collapsible sections headed `path:line [unresolved]` (or `[resolved]`, dimmed and collapsed by default) with a comment count. Each comment line shows its author and the first line of its body; `RET` visits the commented-on file and `b` opens the comment on GitHub.
+In `forge-pullreq-mode` a collapsible `Reviews` section (with `TAB`) is inserted directly before the pull request description. Its heading carries the same `{x}` badge. The body lists review submissions as collapsible entries headed `login [state]`, followed by their full body text; bodyless `APPROVED`, `CHANGES_REQUESTED`, and `DISMISSED` reviews are shown without body text, while empty `COMMENTED` and `PENDING` reviews are omitted. `b` opens a review on GitHub. Review submissions are currently read-only. Review threads remain nested collapsible sections headed `path:line [unresolved]` (or `[resolved]`, dimmed and collapsed by default) with a comment count. Each comment line shows its author and the first line of its body; `RET` visits the commented-on file and `b` opens the comment on GitHub.
 
 ### Keybindings
 
