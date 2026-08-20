@@ -40,6 +40,7 @@
 (require 'forge-plugins-github-reviews)
 (require 'forge-plugins-github-search)
 (require 'forge-plugins-github-teams)
+(require 'forge-plugins-github-subissues)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
@@ -60,7 +61,9 @@
   (when forge-plugins-github-search-enable
     (forge-plugins-github-search-enable))
   (when forge-plugins-github-teams-enable
-    (forge-plugins-github-teams-enable)))
+    (forge-plugins-github-teams-enable))
+  (when forge-plugins-github-subissues-enable
+    (forge-plugins-github-subissues-enable)))
 
 (provide 'forge-plugins)
 ;;; forge-plugins.el ends here

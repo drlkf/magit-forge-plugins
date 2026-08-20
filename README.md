@@ -34,12 +34,43 @@ With `use-package`:
   (forge-plugins-github-projects-enable t)
   (forge-plugins-github-reviews-enable t)
   (forge-plugins-github-search-enable t)
-  (forge-plugins-github-teams-enable t)
+   (forge-plugins-github-teams-enable t)
+   (forge-plugins-github-subissues-enable t)
   :config
   (forge-plugins-enable))
 ```
 
 # Plugins
+
+## GitHub Sub-issues
+
+Display GitHub issue sub-issues hierarchically in Forge issue lists and manage
+the relationships from Emacs.
+
+**Flag:** `forge-plugins-github-subissues-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+Hierarchy data is fetched in the background; the initial issue list remains
+responsive on large repositories and is refreshed when the hierarchy arrives.
+
+### Commands
+
+- `M-x forge-plugins-github-subissues-create` creates an issue with Forge's
+  native issue composer and selects its parent first.
+- `M-x forge-plugins-github-subissues-set-parent` attaches the issue at point
+  to a selected parent.
+- `M-x forge-plugins-github-subissues-remove-parent` removes the current
+  issue's parent.
+- `M-x forge-plugins-github-subissues-refresh` clears the hierarchy cache.
+
+### Customization
+
+- `forge-plugins-github-subissues-ttl` controls the hierarchy cache lifetime
+  in seconds (default `300`).
+
+Sub-issue operations require GitHub issue write permission. The plugin uses
+Forge's existing GitHub authentication and GraphQL connection.
 
 ## Error buffers
 
