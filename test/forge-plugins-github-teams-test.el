@@ -56,7 +56,7 @@
   (should (equal
            (substring-no-properties
             (forge-plugins-github-teams--format
-             '(((organization . "acme") (slug . "backend")))))
+             '(((slug . "backend"))) "acme"))
            "@acme/backend")))
 
 (provide 'forge-plugins-github-teams-test)

@@ -59,17 +59,12 @@
                     (format "%s/%s" owner (alist-get 'slug team)))
                   (alist-get 'teams data))))
 
-(defun forge-plugins-github-teams--format (teams)
+(defun forge-plugins-github-teams--format (teams owner)
   (mapconcat
    (lambda (team)
-     (let ((organization (alist-get 'organization team)))
-       (propertize
-        (format "@%s/%s"
-                (if (listp organization)
-                    (alist-get 'login organization)
-                  organization)
-                (alist-get 'slug team))
-        'face 'transient-value)))
+     (propertize
+      (format "@%s/%s" owner (alist-get 'slug team))
+      'face 'transient-value))
    teams ", "))
 
 (defun forge-plugins-github-teams--request-teams (topic)
@@ -106,7 +101,8 @@
               (forge-get-repository topic)))
         (let* ((id (oref topic id))
                (cached (gethash id forge-plugins-github-teams--requests))
-               (teams (plist-get cached :teams)))
+               (teams (plist-get cached :teams))
+               (owner (oref (forge-get-repository topic) owner)))
           (cond
            ((and cached (plist-get cached :fetching)) value)
            ((and cached (< (- (float-time) (plist-get cached :time))
@@ -114,7 +110,8 @@
             (mapconcat #'identity (delq nil (list value
                                                   (and teams
                                                        (forge-plugins-github-teams--format
-                                                        teams))))
+                                                        teams
+                                                        owner))))
                        ", "))
            (t (forge-plugins-github-teams--request-teams topic) value)))
       value)))
