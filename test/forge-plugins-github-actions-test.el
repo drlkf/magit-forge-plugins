@@ -121,6 +121,30 @@ One success, one skipped and one neutral render `(1/2)' in the success face."
       (should (equal (car summary) "(0/0)"))
       (should (eq (cdr summary) 'magit-dimmed)))))
 
+(ert-deftest forge-plugins-github-actions-test-fetch-truncated-page ()
+  "Totals come from fetched runs, and the request asks for 100 per page.
+A `total_count' larger than the returned page must not count as pending."
+  (let* ((topic (forge-pullreq :id "T4" :head-rev "abc"))
+         (forge-plugins-github-actions--cache (make-hash-table :test 'equal))
+         (forge-plugins-github-actions--inflight 1)
+         params)
+    (cl-letf (((symbol-function 'forge--rest)
+               (lambda (_obj _method _resource p &rest args)
+                 (setq params p)
+                 (funcall (plist-get args :callback)
+                          '((total_count . 33)
+                            (check_runs
+                             ((status . "completed") (conclusion . "success"))
+                             ((status . "completed") (conclusion . "skipped"))))
+                          nil nil nil)))
+              ((symbol-function 'forge-plugins-github-actions--note-pending)
+               #'ignore))
+      (forge-plugins-github-actions--fetch topic))
+    (should (equal (alist-get 'per_page params) 100))
+    (let ((summary (forge-plugins-github-actions--status-summary topic)))
+      (should (equal (car summary) "(1/1)"))
+      (should (eq (cdr summary) 'forge-plugins-github-actions-success)))))
+
 (ert-deftest forge-plugins-github-actions-test-run-app ()
   "The app accessor returns the nested app alist, or nil when absent."
   (let ((run '((name . "build")

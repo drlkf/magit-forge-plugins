@@ -331,11 +331,15 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
         (head-rev (oref topic head-rev)))
     (forge-plugins-github-actions--debug
      "Fetching check runs for topic %s (head-rev: %s)" id head-rev)
-    (forge-rest topic "GET" "/repos/:owner/:repo/commits/:head-rev/check-runs" nil
+    ;; single page of 100; commits with more runs are truncated.
+    (forge-rest topic "GET" "/repos/:owner/:repo/commits/:head-rev/check-runs"
+      ((per_page 100))
       :callback
       (lambda (value _headers _status _req)
-        (let* ((total (alist-get 'total_count value))
-               (runs (alist-get 'check_runs value))
+        ;; Derive total from the fetched runs, not `total_count', so a
+        ;; truncated page never shows phantom pending runs.
+        (let* ((runs (alist-get 'check_runs value))
+               (total (length runs))
                (success 0)
                (failure 0)
                (skipped 0)
