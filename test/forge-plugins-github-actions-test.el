@@ -99,16 +99,27 @@
         (should (= 0 (hash-table-count forge-plugins-github-actions--pending)))))))
 
 (ert-deftest forge-plugins-github-actions-test-skipped-neutral-non-blocking ()
-  "Skipped and neutral runs count in the denominator but don't block success.
-One success, one skipped and one neutral render `(1/3)' in the success face."
+  "Skipped runs are excluded from the denominator, neutral don't block success.
+One success, one skipped and one neutral render `(1/2)' in the success face."
   (let* ((topic (forge-pullreq :id "T2" :head-rev "abc"))
          (forge-plugins-github-actions--cache (make-hash-table :test 'equal)))
     (puthash "T2" (list :head-rev "abc" :total 3 :success 1 :failure 0
-                        :completed 3 :fetching nil)
+                        :skipped 1 :completed 3 :fetching nil)
              forge-plugins-github-actions--cache)
     (let ((summary (forge-plugins-github-actions--status-summary topic)))
-      (should (equal (car summary) "(1/3)"))
+      (should (equal (car summary) "(1/2)"))
       (should (eq (cdr summary) 'forge-plugins-github-actions-success)))))
+
+(ert-deftest forge-plugins-github-actions-test-all-skipped-dimmed ()
+  "When every run is skipped the badge renders `(0/0)' dimmed."
+  (let* ((topic (forge-pullreq :id "T3" :head-rev "abc"))
+         (forge-plugins-github-actions--cache (make-hash-table :test 'equal)))
+    (puthash "T3" (list :head-rev "abc" :total 2 :success 0 :failure 0
+                        :skipped 2 :completed 2 :fetching nil)
+             forge-plugins-github-actions--cache)
+    (let ((summary (forge-plugins-github-actions--status-summary topic)))
+      (should (equal (car summary) "(0/0)"))
+      (should (eq (cdr summary) 'magit-dimmed)))))
 
 (ert-deftest forge-plugins-github-actions-test-run-app ()
   "The app accessor returns the nested app alist, or nil when absent."

@@ -133,6 +133,8 @@ Values are plists:
 - `:head-rev': the head-rev for which this status was fetched.
 - `:total': total number of check runs.
 - `:success': number of successful check runs.
+- `:failure': number of failed check runs.
+- `:skipped': number of skipped check runs (excluded from the badge total).
 - `:completed': number of completed check runs (any conclusion).
 - `:runs': list of check run alists.
 - `:fetching': boolean, whether a fetch is in progress.")
@@ -439,14 +441,15 @@ The return value is a cons cell (STR . FACE) or nil."
            "Cache hit for topic %s (head-rev: %s): total=%s, success=%s, failure=%s, completed=%s, pending=%s"
            id head-rev total success failure completed pending)
           (if (and total (> total 0))
-              ;; Skipped and neutral runs are non-blocking: the badge counts
-              ;; every run in the denominator but is faced green as long as
-              ;; nothing failed and nothing is still pending.
-              (let ((face (cond
-                           ((> failure 0) 'forge-plugins-github-actions-failure)
-                           ((> pending 0) 'forge-plugins-github-actions-warning)
-                           (t 'forge-plugins-github-actions-success))))
-                (cons (format "(%d/%d)" success total) face))
+              ;; Skipped runs are excluded from the denominator; neutral runs
+              ;; count but don't block success.  All-skipped renders dimmed.
+              (let* ((counted (- total (or (plist-get cached :skipped) 0)))
+                     (face (cond
+                            ((> failure 0) 'forge-plugins-github-actions-failure)
+                            ((> pending 0) 'forge-plugins-github-actions-warning)
+                            ((= counted 0) 'magit-dimmed)
+                            (t 'forge-plugins-github-actions-success))))
+                (cons (format "(%d/%d)" success counted) face))
             nil)))))
      (t
       (if cached
@@ -535,6 +538,7 @@ GitHub pull request."
                                   ((member conclusion
                                            '("failure" "timed_out" "action_required"))
                                    'forge-plugins-github-actions-failure)
+                                  ((equal conclusion "skipped") 'magit-dimmed)
                                   (t 'forge-plugins-github-actions-warning)))
                            (beg (point)))
                       (insert "  ")
