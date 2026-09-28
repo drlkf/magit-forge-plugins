@@ -374,6 +374,10 @@ In a pull request buffer (`forge-pullreq-mode`), a `v` prefix keymap acts on the
 - `v g` -- **Refresh** the review threads, forcing a fresh fetch. Reviews change without a new push (the head revision is unchanged), in which case magit's `g` (`magit-refresh`) reuses the cached status; this command bypasses the cache.
 - `v ?` -- Show a `transient` menu of the above.
 
+In both `forge-pullreq-mode` and `magit-status-mode`, the following keybinding is available buffer-wide:
+
+- `C-c C-r` -- Refresh the reviews, forcing a fresh background fetch. In a pull request buffer this refreshes that pull request (same as `v g`); in a status buffer it refreshes every GitHub pull request currently displayed.
+
 On a comment line in the `Reviews` section:
 
 - `RET` -- Visit the commented-on file at its line in the pull request's local worktree (the file is opened at its beginning when the thread is outdated or file-level and has no line).

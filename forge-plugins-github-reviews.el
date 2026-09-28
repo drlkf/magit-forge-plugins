@@ -62,6 +62,8 @@
 (declare-function forge--setup-post-buffer "forge-post")
 (declare-function forge--maybe-restore-winconf "forge-post")
 
+(defvar forge-plugins-github-reviews-enable)
+
 (defconst forge-plugins-github-reviews-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
 
@@ -675,6 +677,22 @@ GitHub pull request."
   "Drop the cached review status for TOPIC, forcing a refetch."
   (remhash (oref topic id) forge-plugins-github-reviews--cache))
 
+(defun forge-plugins-github-reviews--invalidate-displayed ()
+  "Invalidate the cached reviews of every GitHub pull request displayed.
+Return the number of pull requests invalidated."
+  (let ((count 0))
+    (when (bound-and-true-p magit-root-section)
+      (letrec ((walk
+                (lambda (section)
+                  (let ((value (oref section value)))
+                    (when (forge-plugins-github-reviews--target-p value)
+                      (forge-plugins-github-reviews--invalidate value)
+                      (cl-incf count)))
+                  (dolist (child (oref section children))
+                    (funcall walk child)))))
+        (funcall walk magit-root-section)))
+    count))
+
 ;;;; Interaction
 
 (defun forge-plugins-github-reviews--current-topic ()
@@ -876,14 +894,32 @@ request buffers (GraphQL `resolveReviewThread' /
 
 ;;;###autoload
 (defun forge-plugins-github-reviews-refresh ()
-  "Refresh the review threads of the current pull request.
-Invalidates the cache and refreshes the buffer, forcing a fresh fetch.
-Reviews change without a new push (the head revision is unchanged), so
-unlike \\[magit-refresh] this bypasses the cache.  Bound to \\`v g'."
+  "Refresh the reviews in the current buffer.
+Invalidates the cache and refreshes the buffer, forcing a fresh
+background fetch.  Reviews change without a new push (the head
+revision is unchanged), so unlike \\[magit-refresh] this bypasses the
+cache.
+
+In a pull request topic buffer this refreshes the buffer's own topic;
+in a Magit status buffer it refreshes every GitHub pull request
+currently displayed.  Bound to \\`v g' and \\`C-c C-r'."
   (interactive)
-  (let ((topic (forge-plugins-github-reviews--current-topic)))
-    (forge-plugins-github-reviews--invalidate topic)
-    (magit-refresh-buffer)))
+  (let ((invalidated
+         (cond
+          ((and (derived-mode-p 'forge-pullreq-mode)
+                (bound-and-true-p forge-buffer-topic)
+                (forge-plugins-github-reviews--target-p forge-buffer-topic))
+           (forge-plugins-github-reviews--invalidate forge-buffer-topic)
+           1)
+          ((derived-mode-p 'magit-status-mode)
+           (forge-plugins-github-reviews--invalidate-displayed))
+          (t 0))))
+    (if (> invalidated 0)
+        (progn
+          (forge-plugins-github-reviews--debug
+           "Manual refresh invalidated %d pull request(s)" invalidated)
+          (magit-refresh-buffer))
+      (user-error "No GitHub pull requests to refresh"))))
 
 (defun forge-plugins-github-reviews-clear-queue ()
   "Clear the pending review fetch queue and reset dispatch state.
@@ -935,7 +971,12 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
               :before #'forge-plugins-github-reviews--insert-section)
   (when (boundp 'forge-pullreq-mode-map)
     (keymap-set forge-pullreq-mode-map "v"
-                forge-plugins-github-reviews-prefix-map)))
+                forge-plugins-github-reviews-prefix-map)
+    (keymap-set forge-pullreq-mode-map "C-c C-r"
+                #'forge-plugins-github-reviews-refresh))
+  (when (boundp 'magit-status-mode-map)
+    (keymap-set magit-status-mode-map "C-c C-r"
+                #'forge-plugins-github-reviews-refresh)))
 
 ;;;###autoload
 (defun forge-plugins-github-reviews-disable ()
@@ -950,7 +991,10 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
   (advice-remove 'forge--format-topic-line
                  #'forge-plugins-github-reviews--format-topic-line)
   (when (boundp 'forge-pullreq-mode-map)
-    (keymap-unset forge-pullreq-mode-map "v" t)))
+    (keymap-unset forge-pullreq-mode-map "v" t)
+    (keymap-unset forge-pullreq-mode-map "C-c C-r" t))
+  (when (boundp 'magit-status-mode-map)
+    (keymap-unset magit-status-mode-map "C-c C-r" t)))
 
 ;;;###autoload
 (defcustom forge-plugins-github-reviews-enable nil
