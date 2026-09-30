@@ -17,7 +17,8 @@ To use the plugins, require the package, set the desired feature flags to `t`, a
       forge-plugins-github-projects-enable t
       forge-plugins-github-reviews-enable t
       forge-plugins-github-search-enable t
-      forge-plugins-github-teams-enable t)
+      forge-plugins-github-teams-enable t
+      forge-plugins-post-worktree-enable t)
 
 (forge-plugins-enable)
 ```
@@ -36,6 +37,7 @@ With `use-package`:
   (forge-plugins-github-search-enable t)
    (forge-plugins-github-teams-enable t)
    (forge-plugins-github-subissues-enable t)
+  (forge-plugins-post-worktree-enable t)
   :config
   (forge-plugins-enable))
 ```
@@ -218,6 +220,14 @@ In the pull request buffer, `forge` builds the `Commits` section by unioning sev
 This plugin restricts the section to `forge`'s canonical range, `<remote>/<base-ref>..refs/pullreqs/N`, so only the commits actually present in the (re-fetched) pull request are shown. It advises `forge--insert-pullreq-commits` to drop its `all` argument.
 
 **Flag:** `forge-plugins-pullreq-commits-enable` (default `nil`)
+
+**Tested-on-forge:** `0.6.6`
+
+## Post Worktree
+
+`forge` stores post drafts under the repository's recorded worktree. When that clone has been moved or deleted, the draft path is resolved against `default-directory` instead, which is `/` in global list buffers. This plugin validates the worktree with `forge-get-worktree` before a draft path is computed and clears the recorded worktree when it is stale, so drafts fall back to `forge-post-fallback-directory`. It advises `forge--post-expand-file-name`.
+
+**Flag:** `forge-plugins-post-worktree-enable` (default `nil`)
 
 **Tested-on-forge:** `0.6.6`
 
