@@ -201,6 +201,10 @@ In both `forge-pullreq-mode` (a pull request topic buffer) and `magit-status-mod
 
 The command `forge-plugins-github-actions-clear-queue` (no default keybinding, run via `M-x`) empties the pending check-run fetch queue and resets the dispatch state, to recover if fetches ever get stuck. It also runs automatically when the plugin is disabled.
 
+On a pull request line (in a Magit status buffer or topic list):
+
+- `, t` -- Re-run every **failed** GitHub Actions job of the pull request (`forge-plugins-github-actions-rerun-failed`). Fetches a fresh set of check runs, groups the failed ones by workflow run, and issues one GitHub `rerun-failed-jobs` request per distinct run. Only check runs produced by GitHub Actions are covered; check runs from other GitHub Apps have no such endpoint and are ignored.
+
 When viewing the logs inside Emacs, the following keybindings are available:
 
 - `B` -- Open the action's logs in your browser.

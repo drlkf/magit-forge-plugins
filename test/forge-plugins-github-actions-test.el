@@ -157,6 +157,24 @@ A `total_count' larger than the returned page must not count as pending."
       (should (equal (alist-get 'id app) 15368))))
   (should-not (forge-plugins-github-actions--run-app '((name . "build")))))
 
+(ert-deftest forge-plugins-github-actions-test-failed-workflow-run-ids ()
+  "Collect distinct failed workflow run IDs, dropping non-failures."
+  (let ((runs '(((status . "completed") (conclusion . "success")
+                 (html_url . "https://github.com/o/r/actions/runs/111/job/1"))
+                ((status . "completed") (conclusion . "skipped")
+                 (html_url . "https://github.com/o/r/actions/runs/111/job/2"))
+                ((status . "completed") (conclusion . "failure")
+                 (html_url . "https://github.com/o/r/actions/runs/111/job/3"))
+                ((status . "completed") (conclusion . "failure")
+                 (html_url . "https://github.com/o/r/actions/runs/111/job/4"))
+                ((status . "completed") (conclusion . "cancelled")
+                 (html_url . "https://github.com/o/r/actions/runs/222/job/5"))
+                ((status . "completed") (conclusion . "failure")
+                 (html_url . "https://github.com/o/r/does-not-match")))))
+    (should (equal
+             (forge-plugins-github-actions--failed-workflow-run-ids runs)
+             '("111" "222")))))
+
 (ert-deftest forge-plugins-github-actions-test-clear-queue ()
   "Clearing the queue empties it, cancels the timer and zeroes in-flight."
   (let ((forge-plugins-github-actions--queue (list 'a 'b))

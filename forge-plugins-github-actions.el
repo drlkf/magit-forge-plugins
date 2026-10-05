@@ -595,6 +595,22 @@ and UNPAGINATE are as in `forge--rest'."
       (let ((id (alist-get 'id run)))
         (and id (number-to-string id))))))
 
+(defun forge-plugins-github-actions--failed-workflow-run-ids (runs)
+  "Return the distinct workflow run IDs of failed check runs in RUNS.
+A run is considered failed when its status is \"completed\" and its
+conclusion is one of \"failure\", \"timed_out\", \"action_required\" or
+\"cancelled\".  Order is preserved and nils (runs whose `html_url'
+does not match a workflow run URL) are dropped."
+  (let (ids)
+    (dolist (run runs)
+      (when (and (equal (alist-get 'status run) "completed")
+                 (member (alist-get 'conclusion run)
+                         '("failure" "timed_out" "action_required" "cancelled"))
+                 (string-match "/actions/runs/\\([0-9]+\\)/job/"
+                               (or (alist-get 'html_url run) "")))
+        (push (match-string 1 (alist-get 'html_url run)) ids)))
+    (delete-dups (nreverse ids))))
+
 (defun forge-plugins-github-actions--rerun-url (run)
   "Return the Actions job rerun URL for RUN, or nil if unavailable."
   (when (and (alist-get 'html_url run)
@@ -630,6 +646,21 @@ code can identify which app produced RUN via, e.g.,
   "Revert function to refresh the GitHub Action logs."
   (forge-plugins-github-actions--log-fetch-and-display t))
 
+(defun forge-plugins-github-actions--after-rerun (topic)
+  "Mark TOPIC as fetching and schedule a delayed check-run refetch.
+Called after a rerun request succeeds, so the badge shows `fetching...'
+immediately while GitHub spins up the new run before the refetch would
+see anything."
+  (let* ((id (oref topic id))
+         (cached (gethash id forge-plugins-github-actions--cache)))
+    (when cached
+      (puthash id
+               (plist-put cached :fetching t)
+               forge-plugins-github-actions--cache)
+      (forge-plugins-github-actions--note-pending topic)))
+  (run-with-timer
+   2 nil #'forge-plugins-github-actions--enqueue topic))
+
 (defun forge-plugins-github-actions-log-retry ()
   "Re-run the GitHub Action check run at point or shown in the log buffer.
 In a log buffer, retries the run the buffer displays.  On an action
@@ -654,15 +685,7 @@ section line in any magit or forge buffer, retries that run."
         (message "Re-run of %s requested successfully" run-name)
         (forge-plugins-github-actions--debug
          "Successfully requested re-run of check run %s" run-name)
-        (let* ((id (oref topic id))
-               (cached (gethash id forge-plugins-github-actions--cache)))
-          (when cached
-            (puthash id
-                     (plist-put cached :fetching t)
-                     forge-plugins-github-actions--cache)
-            (forge-plugins-github-actions--note-pending topic)))
-        (run-with-timer
-         2 nil #'forge-plugins-github-actions--enqueue topic))
+        (forge-plugins-github-actions--after-rerun topic))
       :errorback
       (lambda (err &rest _)
         (let ((msg (forge-plugins-log-error-message err)))
@@ -1049,6 +1072,60 @@ into one collapsible section per step, matching GitHub's web UI."
   "Re-run the GitHub Action under point.
 Alias for `forge-plugins-github-actions-log-retry'.")
 
+(defun forge-plugins-github-actions-rerun-failed ()
+  "Re-run every failed GitHub Actions workflow run of the pull request.
+Acts on the pull request at point (a topic line in a Magit status
+buffer or topic list) or, failing that, the current pull request
+topic buffer.  Fetches fresh check-run results, then issues one
+rerun-failed-jobs request per distinct failed workflow run."
+  (interactive)
+  (let* ((topic (or (magit-section-value-if 'pullreq)
+                    (and (bound-and-true-p forge-buffer-topic)
+                         (forge-pullreq-p forge-buffer-topic)
+                         forge-buffer-topic)
+                    (user-error "No pull request at point")))
+         (number (oref topic number)))
+    (unless (cl-typep (forge-get-repository topic) 'forge-github-repository)
+      (user-error "Not a GitHub pull request"))
+    (unless (oref topic head-rev)
+      (user-error "Pull request #%s is not synced — run `forge-pull'" number))
+    (message "Fetching GitHub Actions status for #%s..." number)
+    (forge-rest topic "GET" "/repos/:owner/:repo/commits/:head-rev/check-runs"
+      ((per_page 100))
+      :callback
+      (lambda (value _headers _status _req)
+        (let ((ids (forge-plugins-github-actions--failed-workflow-run-ids
+                    (alist-get 'check_runs value))))
+          (if (null ids)
+              (message "No failed GitHub Actions jobs for #%s" number)
+            (message "Re-running failed jobs in %d workflow run(s)..."
+                     (length ids))
+            (dolist (id ids)
+              (forge-rest topic "POST"
+                (format "/repos/:owner/:repo/actions/runs/%s/rerun-failed-jobs" id)
+                nil
+                :callback
+                (lambda (&rest _)
+                  (forge-plugins-github-actions--debug
+                   "Successfully requested rerun-failed-jobs for run %s" id)
+                  (forge-plugins-github-actions--after-rerun topic))
+                :errorback
+                (lambda (err &rest _)
+                  (let ((msg (forge-plugins-log-error-message err)))
+                    (forge-plugins-log-error "github-actions"
+                                             "Failed to rerun failed jobs of run %s: %s"
+                                             id msg)
+                    (forge-plugins-github-actions--debug
+                     "Failed to rerun failed jobs of run %s: %S" id err))))))))
+      :errorback
+      (lambda (err _headers _status _req)
+        (let ((msg (forge-plugins-log-error-message err)))
+          (forge-plugins-log-error "github-actions"
+                                   "Failed to fetch check runs for #%s: %s"
+                                   number msg)
+          (message "Failed to fetch GitHub Actions status for #%s: %s"
+                   number msg))))))
+
 (defun forge-plugins-github-actions--invalidate (topic)
   "Drop the cached GitHub Actions status for TOPIC, forcing a refetch.
 The next call to `forge-plugins-github-actions--status-summary' for
@@ -1146,7 +1223,9 @@ request currently displayed."
   (keymap-set forge-pullreq-mode-map "C-c C-a"
               #'forge-plugins-github-actions-refresh)
   (keymap-set magit-status-mode-map "C-c C-a"
-              #'forge-plugins-github-actions-refresh))
+              #'forge-plugins-github-actions-refresh)
+  (keymap-set forge-pullreq-section-map ", t"
+              #'forge-plugins-github-actions-rerun-failed))
 
 ;;;###autoload
 (defun forge-plugins-github-actions-disable ()
@@ -1161,7 +1240,8 @@ request currently displayed."
   (advice-remove 'forge--format-topic-line
                  #'forge-plugins-github-actions--format-topic-line)
   (keymap-unset forge-pullreq-mode-map "C-c C-a" t)
-  (keymap-unset magit-status-mode-map "C-c C-a" t))
+  (keymap-unset magit-status-mode-map "C-c C-a" t)
+  (keymap-unset forge-pullreq-section-map ", t" t))
 
 ;;;###autoload
 (defcustom forge-plugins-github-actions-enable nil
