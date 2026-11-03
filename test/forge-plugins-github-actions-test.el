@@ -24,6 +24,20 @@
   "Do not build a rerun endpoint when no job ID is available."
   (should-not (forge-plugins-github-actions--rerun-url '((id . 34)))))
 
+(ert-deftest forge-plugins-github-actions-test-log-error-text ()
+  "Explain 404s on job logs by job status."
+  (let ((err '(error http 404 "{\"message\":\"Not Found\"}")))
+    (should (string-prefix-p "Job still running"
+                             (forge-plugins-github-actions--log-error-text
+                              err "in_progress")))
+    (should (string-prefix-p "Logs not found"
+                             (forge-plugins-github-actions--log-error-text
+                              err "completed")))
+    (should (string-prefix-p "Failed to fetch logs.\nError: Forbidden"
+                             (forge-plugins-github-actions--log-error-text
+                              '(error http 403 ((message . "Forbidden")))
+                              nil)))))
+
 (ert-deftest forge-plugins-log-test-error-message ()
   "Extract the API message from a ghub HTTP error."
   (should (equal

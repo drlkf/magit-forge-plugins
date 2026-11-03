@@ -144,6 +144,10 @@ Values are plists:
 Keys are job IDs (strings).
 Values are log strings.")
 
+(defvar forge-plugins-github-actions--job-status-cache
+  (make-hash-table :test 'equal)
+  "Cache of GitHub Actions job statuses, keyed by job ID (string).")
+
 (defvar forge-plugins-github-actions--steps-cache (make-hash-table :test 'equal)
   "Cache of GitHub Actions job step metadata.
 Keys are job IDs (strings).
@@ -983,11 +987,21 @@ beforehand by `forge-plugins-github-actions--log-fetch-and-display'."
         "Failed to fetch logs for job %s: %S" job-id err)
        (when (buffer-live-p buf)
          (with-current-buffer buf
-           (let ((msg (forge-plugins-log-error-message err)))
-             (forge-plugins-github-actions--log-insert-message
-              (if msg
-                  (concat "Failed to fetch logs.\n" "Error: " msg "\n")
-                "Failed to fetch logs.\n")))))))))
+           (forge-plugins-github-actions--log-insert-message
+            (forge-plugins-github-actions--log-error-text
+             err (gethash job-id
+                          forge-plugins-github-actions--job-status-cache)))))))))
+
+(defun forge-plugins-github-actions--log-error-text (err status)
+  "Return the message to display for log fetch error ERR.
+STATUS is the job status, if known."
+  (cond
+   ((not (and (listp err) (memq 404 err)))
+    (concat "Failed to fetch logs.\nError: "
+            (forge-plugins-log-error-message err) "\n"))
+   ((and status (not (equal status "completed")))
+    "Job still running; logs are available once it completes.\n")
+   (t "Logs not found (expired, deleted, or no access).\n")))
 
 (defun forge-plugins-github-actions--log-fetch-steps (topic job-id buf then)
   "Fetch step metadata for JOB-ID of TOPIC, cache it, then call THEN.
@@ -1002,6 +1016,8 @@ against rendering into a dead buffer."
         (let ((steps (alist-get 'steps value)))
           (forge-plugins-github-actions--debug
            "Fetched %d steps for job %s" (length steps) job-id)
+          (puthash job-id (alist-get 'status value)
+                   forge-plugins-github-actions--job-status-cache)
           (puthash job-id (or steps 'none)
                    forge-plugins-github-actions--steps-cache)
           (when (buffer-live-p buf) (funcall then))))
