@@ -329,20 +329,25 @@ below `forge-plugins-github-actions-max-concurrent-requests'."
     (cl-decf forge-plugins-github-actions--inflight))
   (forge-plugins-github-actions--dispatch))
 
+(defun forge-plugins-github-actions--check-runs (value)
+  "Return all check runs in VALUE, an unpaginated check-runs response.
+ghub concatenates each page's object, so `check_runs' repeats per page."
+  (cl-loop for (key . runs) in value
+           when (eq key 'check_runs) append runs))
+
 (defun forge-plugins-github-actions--fetch (topic)
   "Fetch GitHub Actions check-run results for TOPIC asynchronously."
   (let ((id (oref topic id))
         (head-rev (oref topic head-rev)))
     (forge-plugins-github-actions--debug
      "Fetching check runs for topic %s (head-rev: %s)" id head-rev)
-    ;; single page of 100; commits with more runs are truncated.
     (forge-rest topic "GET" "/repos/:owner/:repo/commits/:head-rev/check-runs"
       ((per_page 100))
+      :unpaginate t
       :callback
       (lambda (value _headers _status _req)
-        ;; Derive total from the fetched runs, not `total_count', so a
-        ;; truncated page never shows phantom pending runs.
-        (let* ((runs (alist-get 'check_runs value))
+        ;; Derive total from the fetched runs, not `total_count'.
+        (let* ((runs (forge-plugins-github-actions--check-runs value))
                (total (length runs))
                (success 0)
                (failure 0)
@@ -1108,10 +1113,11 @@ rerun-failed-jobs request per distinct failed workflow run."
     (message "Fetching GitHub Actions status for #%s..." number)
     (forge-rest topic "GET" "/repos/:owner/:repo/commits/:head-rev/check-runs"
       ((per_page 100))
+      :unpaginate t
       :callback
       (lambda (value _headers _status _req)
         (let ((ids (forge-plugins-github-actions--failed-workflow-run-ids
-                    (alist-get 'check_runs value))))
+                    (forge-plugins-github-actions--check-runs value))))
           (if (null ids)
               (message "No failed GitHub Actions jobs for #%s" number)
             (message "Re-running failed jobs in %d workflow run(s)..."

@@ -137,7 +137,7 @@ One success, one skipped and one neutral render `(1/2)' in the success face."
 
 (ert-deftest forge-plugins-github-actions-test-fetch-truncated-page ()
   "Totals come from fetched runs, and the request asks for 100 per page.
-A `total_count' larger than the returned page must not count as pending."
+A `total_count' larger than the returned runs must not count as pending."
   (let* ((topic (forge-pullreq :id "T4" :head-rev "abc"))
          (forge-plugins-github-actions--cache (make-hash-table :test 'equal))
          (forge-plugins-github-actions--inflight 1)
@@ -158,6 +158,32 @@ A `total_count' larger than the returned page must not count as pending."
     (let ((summary (forge-plugins-github-actions--status-summary topic)))
       (should (equal (car summary) "(1/1)"))
       (should (eq (cdr summary) 'forge-plugins-github-actions-success)))))
+
+(ert-deftest forge-plugins-github-actions-test-fetch-multiple-pages ()
+  "Runs from every unpaginated page are counted."
+  (let* ((topic (forge-pullreq :id "T5" :head-rev "abc"))
+         (forge-plugins-github-actions--cache (make-hash-table :test 'equal))
+         (forge-plugins-github-actions--inflight 1)
+         (ok '((status . "completed") (conclusion . "success")))
+         (ko '((status . "completed") (conclusion . "failure")))
+         args)
+    (cl-letf (((symbol-function 'forge--rest)
+               (lambda (_obj _method _resource _p &rest a)
+                 (setq args a)
+                 (funcall (plist-get a :callback)
+                          `((total_count . 150)
+                            (check_runs ,@(make-list 100 ok))
+                            (total_count . 150)
+                            (check_runs ,@(make-list 49 ok) ,ko))
+                          nil nil nil)))
+              ((symbol-function 'forge-plugins-github-actions--note-pending)
+               #'ignore))
+      (forge-plugins-github-actions--fetch topic))
+    (should (eq (plist-get args :unpaginate) t))
+    (let ((entry (gethash "T5" forge-plugins-github-actions--cache)))
+      (should (= (plist-get entry :total) 150))
+      (should (= (plist-get entry :success) 149))
+      (should (= (plist-get entry :failure) 1)))))
 
 (ert-deftest forge-plugins-github-actions-test-run-app ()
   "The app accessor returns the nested app alist, or nil when absent."
