@@ -235,6 +235,14 @@ This plugin restricts the section to `forge`'s canonical range, `<remote>/<base-
 
 **Tested-on-forge:** `0.6.6`
 
+## Topic Kill
+
+**Tested-on-forge:** `0.6.6`
+
+Quitting a topic buffer (`q`, `magit-mode-bury-buffer`) kills it instead of burying it. Advises `magit-mode-bury-buffer`.
+
+**Flag:** `forge-plugins-topic-kill-enable` (default `nil`)
+
 ## Pull Request Approvals
 
 Display the approval status of GitHub pull requests on their topic lines (in topic/notification lists and in the Magit status buffer) and in the pull request topic view. The indicator is formatted as `<x/y>`, where `x` is the current number of approvals and `y` is the number of approvals required by the target branch's rules. For example, if a pull request has three review requests but the branch only requires one approval, and one of them has approved, the indicator shows `<1/1>`.

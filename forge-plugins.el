@@ -42,6 +42,7 @@
 (require 'forge-plugins-github-teams)
 (require 'forge-plugins-github-subissues)
 (require 'forge-plugins-post-worktree)
+(require 'forge-plugins-topic-kill)
 
 ;;;###autoload
 (defun forge-plugins-enable ()
@@ -66,7 +67,9 @@
   (when forge-plugins-github-subissues-enable
     (forge-plugins-github-subissues-enable))
   (when forge-plugins-post-worktree-enable
-    (forge-plugins-post-worktree-enable)))
+    (forge-plugins-post-worktree-enable))
+  (when forge-plugins-topic-kill-enable
+    (forge-plugins-topic-kill-enable)))
 
 (provide 'forge-plugins)
 ;;; forge-plugins.el ends here
