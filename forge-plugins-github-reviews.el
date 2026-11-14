@@ -379,16 +379,56 @@ Tracked so enqueuing appends in constant time.")
              (setq forge-plugins-github-reviews--dispatch-timer nil)
              (forge-plugins-github-reviews--dispatch))))))
 
-(defun forge-plugins-github-reviews--dispatch ()
-  "Dispatch queued fetches up to the concurrency limit."
-  (while (and forge-plugins-github-reviews--queue
-              (< forge-plugins-github-reviews--inflight
-                 forge-plugins-github-reviews-max-concurrent-requests))
-    (let ((topic (pop forge-plugins-github-reviews--queue)))
-      (unless forge-plugins-github-reviews--queue
-        (setq forge-plugins-github-reviews--queue-tail nil))
+(defun forge-plugins-github-reviews--batchable-p (topic)
+  "Return non-nil when TOPIC can be prefetched in a GraphQL batch."
+  (and (oref topic head-rev)
+       (cl-typep (forge-get-repository topic) 'forge-github-repository)))
+
+(defun forge-plugins-github-reviews--batch-count (topics)
+  "Return the number of batched queries needed for TOPICS."
+  (cl-loop for (_ . group) in (seq-group-by #'forge-get-repository topics)
+           sum (ceiling (length group) forge-plugins-prefetch-batch-size)))
+
+(defun forge-plugins-github-reviews--batch-done (topics)
+  "Finish the prefetched batch of TOPICS.
+Topics the prefetch left uncached fall back to a per-topic fetch."
+  (let* ((missing
+          (lambda (topic)
+            (let ((cached (gethash (oref topic id)
+                                   forge-plugins-github-reviews--cache)))
+              (or (null cached) (plist-get cached :fetching)))))
+         (missed (seq-filter missing topics))
+         (hit (seq-remove missing topics)))
+    (dolist (topic missed)
       (cl-incf forge-plugins-github-reviews--inflight)
-      (forge-plugins-github-reviews--fetch topic))))
+      (forge-plugins-github-reviews--fetch topic))
+    (mapc #'forge-plugins-github-reviews--note-pending hit)
+    (forge-plugins-github-reviews--fetch-done)))
+
+(defun forge-plugins-github-reviews--dispatch ()
+  "Drain the queue unless the concurrency limit is reached.
+Batchable topics go through `forge-plugins-prefetch-batch', each batch
+counting once against
+`forge-plugins-github-reviews-max-concurrent-requests'; the others get
+a per-topic fetch."
+  (when (and forge-plugins-github-reviews--queue
+             (< forge-plugins-github-reviews--inflight
+                forge-plugins-github-reviews-max-concurrent-requests))
+    (let ((topics forge-plugins-github-reviews--queue))
+      (setq forge-plugins-github-reviews--queue nil
+            forge-plugins-github-reviews--queue-tail nil)
+      (let ((batch (seq-filter #'forge-plugins-github-reviews--batchable-p
+                               topics))
+            (single (seq-remove #'forge-plugins-github-reviews--batchable-p
+                                topics)))
+        (when batch
+          (cl-incf forge-plugins-github-reviews--inflight
+                   (forge-plugins-github-reviews--batch-count batch))
+          (forge-plugins-prefetch-batch
+           'github-reviews batch #'forge-plugins-github-reviews--batch-done))
+        (dolist (topic single)
+          (cl-incf forge-plugins-github-reviews--inflight)
+          (forge-plugins-github-reviews--fetch topic))))))
 
 (defun forge-plugins-github-reviews--fetch-done ()
   "Account for a completed fetch and dispatch any queued ones."

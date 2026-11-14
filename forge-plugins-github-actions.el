@@ -310,21 +310,56 @@ work is performed during buffer redisplay."
              (setq forge-plugins-github-actions--dispatch-timer nil)
              (forge-plugins-github-actions--dispatch))))))
 
-(defun forge-plugins-github-actions--dispatch ()
-  "Dispatch queued fetches up to the concurrency limit.
-Pops topics off `forge-plugins-github-actions--queue' and fires a
-fetch for each, as long as the number of in-flight requests stays
-below `forge-plugins-github-actions-max-concurrent-requests'."
-  (while (and forge-plugins-github-actions--queue
-              (< forge-plugins-github-actions--inflight
-                 forge-plugins-github-actions-max-concurrent-requests))
-    (let ((topic (pop forge-plugins-github-actions--queue)))
-      ;; Clear the tail before --fetch so the queue invariant holds; safe
-      ;; because --fetch is async and cannot re-enter --enqueue synchronously.
-      (unless forge-plugins-github-actions--queue
-        (setq forge-plugins-github-actions--queue-tail nil))
+(defun forge-plugins-github-actions--batchable-p (topic)
+  "Return non-nil when TOPIC can be prefetched in a GraphQL batch."
+  (and (oref topic head-rev)
+       (cl-typep (forge-get-repository topic) 'forge-github-repository)))
+
+(defun forge-plugins-github-actions--batch-count (topics)
+  "Return the number of batched queries needed for TOPICS."
+  (cl-loop for (_ . group) in (seq-group-by #'forge-get-repository topics)
+           sum (ceiling (length group) forge-plugins-prefetch-batch-size)))
+
+(defun forge-plugins-github-actions--batch-done (topics)
+  "Finish the prefetched batch of TOPICS.
+Topics the prefetch left uncached fall back to a per-topic fetch."
+  (let* ((missing
+          (lambda (topic)
+            (let ((cached (gethash (oref topic id)
+                                   forge-plugins-github-actions--cache)))
+              (or (null cached) (plist-get cached :fetching)))))
+         (missed (seq-filter missing topics))
+         (hit (seq-remove missing topics)))
+    (dolist (topic missed)
       (cl-incf forge-plugins-github-actions--inflight)
-      (forge-plugins-github-actions--fetch topic))))
+      (forge-plugins-github-actions--fetch topic))
+    (mapc #'forge-plugins-github-actions--note-pending hit)
+    (forge-plugins-github-actions--fetch-done)))
+
+(defun forge-plugins-github-actions--dispatch ()
+  "Drain the queue unless the concurrency limit is reached.
+Batchable topics go through `forge-plugins-prefetch-batch', each batch
+counting once against
+`forge-plugins-github-actions-max-concurrent-requests'; the others get
+a per-topic fetch."
+  (when (and forge-plugins-github-actions--queue
+             (< forge-plugins-github-actions--inflight
+                forge-plugins-github-actions-max-concurrent-requests))
+    (let ((topics forge-plugins-github-actions--queue))
+      (setq forge-plugins-github-actions--queue nil
+            forge-plugins-github-actions--queue-tail nil)
+      (let ((batch (seq-filter #'forge-plugins-github-actions--batchable-p
+                               topics))
+            (single (seq-remove #'forge-plugins-github-actions--batchable-p
+                                topics)))
+        (when batch
+          (cl-incf forge-plugins-github-actions--inflight
+                   (forge-plugins-github-actions--batch-count batch))
+          (forge-plugins-prefetch-batch
+           'github-actions batch #'forge-plugins-github-actions--batch-done))
+        (dolist (topic single)
+          (cl-incf forge-plugins-github-actions--inflight)
+          (forge-plugins-github-actions--fetch topic))))))
 
 (defun forge-plugins-github-actions--fetch-done ()
   "Account for a completed fetch and dispatch any queued ones."

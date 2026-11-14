@@ -18,6 +18,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'forge-github)
 
 ;; forge main splits its query into per-type fragments; released forge
@@ -73,6 +74,43 @@ ARGS covers released forge's extra optional arguments."
     (dolist (p (forge-plugins-prefetch--active))
       (with-demoted-errors "forge-plugins-prefetch: %S"
         (funcall (nth 3 p) repo data)))))
+
+(defconst forge-plugins-prefetch-batch-size 50
+  "Maximum pull requests per batched query.")
+
+(defun forge-plugins-prefetch--batch-query (name numbers)
+  "Query fetching provider NAME's fields for pull request NUMBERS."
+  (let ((fields (nth 1 (alist-get name forge-plugins-prefetch--providers))))
+    `(query
+      (repository
+       [(owner $owner String!) (name $name String!)]
+       ,@(mapcar (lambda (n)
+                   `((,(format "pr_%d" n) pullRequest) [(number ,n)]
+                     number headRefOid ,@fields))
+                 numbers)))))
+
+(defun forge-plugins-prefetch-batch (name topics callback)
+  "Fetch provider NAME's fields for pull request TOPICS in batched queries.
+Each pulled PR goes to NAME's consumer.  CALLBACK is called once per
+batch with that batch's topics, after the consumer ran or the query
+failed, so the caller can fall back for topics still not cached."
+  (let ((consumer (nth 2 (alist-get name forge-plugins-prefetch--providers))))
+    (dolist (group (seq-group-by #'forge-get-repository topics))
+      (pcase-let ((`(,repo . ,repo-topics) group))
+        (dolist (batch (seq-partition repo-topics forge-plugins-prefetch-batch-size))
+          (forge--query repo
+            (forge-plugins-prefetch--batch-query
+             name (mapcar (lambda (topic) (oref topic number)) batch))
+            `((owner . ,(oref repo owner)) (name . ,(oref repo name)))
+            :noerror t
+            :callback
+            (lambda (data &rest _)
+              (dolist (pr (alist-get 'repository data))
+                (when (cdr pr)
+                  (with-demoted-errors "forge-plugins-prefetch: %S"
+                    (funcall consumer repo (cdr pr)))))
+              (funcall callback batch))
+            :errorback (lambda (&rest _) (funcall callback batch))))))))
 
 (advice-add 'forge--pull :around #'forge-plugins-prefetch--pull-advice)
 (advice-add 'forge--pull-topic :around #'forge-plugins-prefetch--pull-advice)

@@ -266,22 +266,51 @@ work is performed during buffer redisplay."
              (setq forge-plugins-pullreq-approvals--dispatch-timer nil)
              (forge-plugins-pullreq-approvals--dispatch))))))
 
+(defun forge-plugins-pullreq-approvals--batchable-p (topic)
+  "Return non-nil when TOPIC can be prefetched in a GraphQL batch."
+  (and (oref topic head-rev)
+       (cl-typep (forge-get-repository topic) 'forge-github-repository)))
+
+(defun forge-plugins-pullreq-approvals--batch-count (topics)
+  "Return the number of batched queries needed for TOPICS."
+  (cl-loop for (_ . group) in (seq-group-by #'forge-get-repository topics)
+           sum (ceiling (length group) forge-plugins-prefetch-batch-size)))
+
+(defun forge-plugins-pullreq-approvals--batch-done (topics)
+  "Finish the prefetched batch of TOPICS.
+The prefetch only stashed reviews, so every topic still runs `--fetch',
+which consumes them (or falls back to REST) and resolves the branch
+rules.  Each `--fetch' accounts for itself through `--fetch-done'."
+  (dolist (topic topics)
+    (cl-incf forge-plugins-pullreq-approvals--inflight)
+    (forge-plugins-pullreq-approvals--fetch topic))
+  (forge-plugins-pullreq-approvals--fetch-done))
+
 (defun forge-plugins-pullreq-approvals--dispatch ()
-  "Dispatch queued fetches up to the concurrency limit.
-Pops topics off `forge-plugins-pullreq-approvals--queue' and fires
-a fetch for each, as long as the number of in-flight requests
-stays below
-`forge-plugins-pullreq-approvals-max-concurrent-requests'."
-  (while (and forge-plugins-pullreq-approvals--queue
-              (< forge-plugins-pullreq-approvals--inflight
-                 forge-plugins-pullreq-approvals-max-concurrent-requests))
-    (let ((topic (pop forge-plugins-pullreq-approvals--queue)))
-      ;; Clear the tail before --fetch so the queue invariant holds; safe
-      ;; because --fetch is async and cannot re-enter --enqueue synchronously.
-      (unless forge-plugins-pullreq-approvals--queue
-        (setq forge-plugins-pullreq-approvals--queue-tail nil))
-      (cl-incf forge-plugins-pullreq-approvals--inflight)
-      (forge-plugins-pullreq-approvals--fetch topic))))
+  "Drain the queue unless the concurrency limit is reached.
+Batchable topics go through `forge-plugins-prefetch-batch', each batch
+counting once against
+`forge-plugins-pullreq-approvals-max-concurrent-requests'; the others
+get a per-topic fetch."
+  (when (and forge-plugins-pullreq-approvals--queue
+             (< forge-plugins-pullreq-approvals--inflight
+                forge-plugins-pullreq-approvals-max-concurrent-requests))
+    (let ((topics forge-plugins-pullreq-approvals--queue))
+      (setq forge-plugins-pullreq-approvals--queue nil
+            forge-plugins-pullreq-approvals--queue-tail nil)
+      (let ((batch (seq-filter #'forge-plugins-pullreq-approvals--batchable-p
+                               topics))
+            (single (seq-remove #'forge-plugins-pullreq-approvals--batchable-p
+                                topics)))
+        (when batch
+          (cl-incf forge-plugins-pullreq-approvals--inflight
+                   (forge-plugins-pullreq-approvals--batch-count batch))
+          (forge-plugins-prefetch-batch
+           'pullreq-approvals batch
+           #'forge-plugins-pullreq-approvals--batch-done))
+        (dolist (topic single)
+          (cl-incf forge-plugins-pullreq-approvals--inflight)
+          (forge-plugins-pullreq-approvals--fetch topic))))))
 
 (defun forge-plugins-pullreq-approvals--fetch-done ()
   "Account for a completed fetch and dispatch any queued ones."

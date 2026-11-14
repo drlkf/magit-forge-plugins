@@ -109,6 +109,16 @@ an outdated head commit, nothing is cached and the plugin falls back to its
 usual request. Branch rules, org teams, sub-issues and projects keep their
 lazy fetches. Check runs prefetched this way have no `app` field.
 
+Cache misses outside a pull are batched too. When a buffer first renders,
+or after the `*-refresh` commands, the plugins send one GraphQL query per
+repository per 50 pull requests, each PR under an alias such as
+`pr_12: pullRequest(number: 12)`. They don't send one request per topic.
+These queries go straight to GitHub, so a refresh always returns fresh
+data. Topics the batch couldn't cache fall back to the plugin's per-topic
+request. For Pull Request Approvals only reviews are batched; branch rules
+stay a cached per-base-ref request. `max-concurrent-requests` limits
+batches in flight.
+
 Other plugins can add fields with `forge-plugins-prefetch-register`. It
 takes a name, a flag symbol, gsexp pull request fields (connections must
 use `first`/`last`, not `:edges`) and a consumer called with the repository
