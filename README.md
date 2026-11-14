@@ -89,6 +89,31 @@ encountered them. These buffers are always enabled and are named
 The existing `-debug` customizations and `*-debug*` buffers remain separate
 and continue to be opt-in.
 
+## Pull prefetch
+
+`forge-pull` (and single-topic pulls) fetch the extra pull request data
+that enabled plugins need, in forge's own GraphQL query. The plugins then
+fill their caches from it instead of sending a request per topic. It's
+always on and only adds fields for plugins whose flag is non-nil:
+
+| Plugin | Prefetched fields | Per-topic request it replaces |
+|---|---|---|
+| GitHub Actions | latest commit's check runs (up to 100) | REST `check-runs` |
+| Pull Request Approvals | `reviews` (up to 100) | REST `pulls/:number/reviews` |
+| GitHub Reviews | `reviewThreads` (up to 50, 50 comments each) and `reviews` | review threads GraphQL query |
+| GitHub Teams | team review requests (up to 100) | REST `requested_reviewers` |
+
+The prefetched lists have fixed size caps, so ghub doesn't page through
+them PR by PR. When a list is longer than its cap, or check runs belong to
+an outdated head commit, nothing is cached and the plugin falls back to its
+usual request. Branch rules, org teams, sub-issues and projects keep their
+lazy fetches. Check runs prefetched this way have no `app` field.
+
+Other plugins can add fields with `forge-plugins-prefetch-register`. It
+takes a name, a flag symbol, gsexp pull request fields (connections must
+use `first`/`last`, not `:edges`) and a consumer called with the repository
+and each pulled PR's data.
+
 ## GitHub Teams
 
 Include GitHub teams in Forge's pull-request review-request prompt. Existing
