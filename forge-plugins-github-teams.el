@@ -11,6 +11,7 @@
 (require 'forge-github)
 (require 'forge-topic)
 (require 'forge-plugins-log)
+(require 'forge-plugins-prefetch)
 
 (defgroup forge-plugins-github-teams nil
   "GitHub team review requests in Forge."
@@ -51,6 +52,29 @@
            do (push reviewer teams)
            else do (push reviewer users)
            finally return (list (nreverse users) (nreverse teams))))
+
+(defun forge-plugins-github-teams--prefetch (repo data)
+  "Fill the requested-teams cache for the pull request DATA of REPO."
+  (let-alist data
+    (let ((requests .teamReviewRequests))
+      (unless (memq (alist-get 'hasNextPage (alist-get 'pageInfo requests))
+                    '(t))
+        (puthash (forge--object-id 'forge-pullreq repo .number)
+                 (list :teams
+                       (cl-loop for node in (alist-get 'nodes requests)
+                                for team = (alist-get 'requestedReviewer node)
+                                when (alist-get 'slug team)
+                                collect (list (assq 'slug team)
+                                              (assq 'name team)))
+                       :time (float-time))
+                 forge-plugins-github-teams--requests)))))
+
+(forge-plugins-prefetch-register
+ 'github-teams 'forge-plugins-github-teams-enable
+ '(((teamReviewRequests reviewRequests) [(first 100)]
+    (pageInfo hasNextPage)
+    (nodes (requestedReviewer "... on Team { slug name }\n"))))
+ #'forge-plugins-github-teams--prefetch)
 
 (defun forge-plugins-github-teams--requested-reviewers (data owner)
   (append (mapcar (lambda (user) (alist-get 'login user))

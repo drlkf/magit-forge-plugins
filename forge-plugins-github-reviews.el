@@ -55,6 +55,7 @@
 (require 'transient)
 (require 'cl-lib)
 (require 'forge-plugins-log)
+(require 'forge-plugins-prefetch)
 
 (declare-function forge-get-repository "forge-core")
 (declare-function forge-get-worktree "forge-repo")
@@ -411,6 +412,43 @@ HEAD-REV is the head-rev the fetch was performed against."
      (oref topic id) (plist-get parsed :unresolved)))
   (forge-plugins-github-reviews--fetch-done)
   (forge-plugins-github-reviews--note-pending topic))
+
+(defconst forge-plugins-github-reviews--prefetch-fields
+  '((reviewThreads [(first 50)]
+                   (pageInfo hasNextPage)
+                   (nodes id isResolved isOutdated path line
+                          (comments [(first 50)]
+                                    (pageInfo hasNextPage)
+                                    (nodes id (author login) body url
+                                           viewerDidAuthor))))
+    (reviews [(first 100)]
+             (pageInfo hasNextPage)
+             (nodes id (author login) body state url)))
+  "Pull request fields fetched alongside forge's pull.")
+
+(defun forge-plugins-github-reviews--prefetch (repo data)
+  "Fill the cache from pull request DATA of REPO.
+Skipped when any connection has more pages."
+  (let ((threads (alist-get 'reviewThreads data))
+        (reviews (alist-get 'reviews data)))
+    (when (and threads reviews
+               (not (cl-some
+                     (lambda (c) (eq t (alist-get 'hasNextPage
+                                                  (alist-get 'pageInfo c))))
+                     (append (list threads reviews)
+                             (mapcar (lambda (tn) (alist-get 'comments tn))
+                                     (alist-get 'nodes threads))))))
+      (let ((parsed (forge-plugins-github-reviews--parse
+                     `((repository
+                        (pullRequest (reviewThreads . ,threads)
+                                     (reviews . ,reviews)))))))
+        (puthash (forge--object-id 'forge-pullreq repo (alist-get 'number data))
+                 (list :head-rev (alist-get 'headRefOid data)
+                       :threads (plist-get parsed :threads)
+                       :unresolved (plist-get parsed :unresolved)
+                       :reviews (plist-get parsed :reviews)
+                       :fetching nil)
+                 forge-plugins-github-reviews--cache)))))
 
 (defun forge-plugins-github-reviews--store-error (topic head-rev)
   "Record a failed review fetch for TOPIC against HEAD-REV."
@@ -1011,6 +1049,11 @@ in-flight counter.  Use this to recover if fetches ever get stuck."
 
 (when forge-plugins-github-reviews-enable
   (forge-plugins-github-reviews-enable))
+
+(forge-plugins-prefetch-register
+ 'github-reviews 'forge-plugins-github-reviews-enable
+ forge-plugins-github-reviews--prefetch-fields
+ #'forge-plugins-github-reviews--prefetch)
 
 ;;;###autoload
 (defun forge-plugins-github-reviews-show-errors ()

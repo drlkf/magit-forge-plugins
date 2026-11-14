@@ -43,6 +43,9 @@
 (require 'magit-section nil t)
 (require 'cl-lib)
 (require 'forge-plugins-log)
+(require 'forge-plugins-prefetch)
+
+(defvar forge-plugins-pullreq-approvals-enable)
 
 (defconst forge-plugins-pullreq-approvals-tested-on-forge "0.6.6"
   "Forge version this plugin was tested against.")
@@ -349,12 +352,60 @@ the required approval count, and RESULT the cons returned by
   (forge-plugins-pullreq-approvals--fetch-done)
   (forge-plugins-pullreq-approvals--note-pending topic))
 
+(defvar forge-plugins-pullreq-approvals--prefetched
+  (make-hash-table :test 'equal)
+  "Reviews delivered by `forge-plugins-prefetch' during pulls.
+Keys are topic IDs, values (HEAD-REV . REVIEWS) with REVIEWS in the
+REST shape.  Consumed once by `forge-plugins-pullreq-approvals--fetch-reviews'.")
+
+(defconst forge-plugins-pullreq-approvals--prefetch-fields
+  '((reviews [(first 100)]
+             (pageInfo hasNextPage)
+             (nodes id databaseId state submittedAt (author login) (commit oid))))
+  "Pull request fields fetched alongside forge's pull.")
+
+(defun forge-plugins-pullreq-approvals--prefetch (repo data)
+  "Stash the reviews in pull request DATA of REPO in REST shape.
+Skipped when the reviews connection has more pages."
+  (let ((reviews (alist-get 'reviews data)))
+    (when (and reviews
+               (not (eq t (alist-get 'hasNextPage
+                                     (alist-get 'pageInfo reviews)))))
+      (let ((id (forge--object-id 'forge-pullreq repo (alist-get 'number data))))
+        (puthash id
+                 (cons (alist-get 'headRefOid data)
+                       (mapcar
+                        (lambda (n)
+                          `((id . ,(alist-get 'databaseId n))
+                            (state . ,(alist-get 'state n))
+                            (submitted_at . ,(alist-get 'submittedAt n))
+                            (commit_id . ,(alist-get 'oid (alist-get 'commit n)))
+                            (user . ((login . ,(alist-get
+                                                'login (alist-get 'author n)))))))
+                        (alist-get 'nodes reviews)))
+                 forge-plugins-pullreq-approvals--prefetched)
+        (remhash id forge-plugins-pullreq-approvals--cache)))))
+
 (defun forge-plugins-pullreq-approvals--fetch-reviews (topic head-rev required)
   "Fetch reviews for TOPIC and store the resulting approvals.
 HEAD-REV is the head-rev the fetch is performed against and
 REQUIRED the required approval count for the target branch."
   (forge-plugins-pullreq-approvals--debug
    "Fetching reviews for topic %s (head-rev: %s)" (oref topic id) head-rev)
+  (let ((pre (gethash (oref topic id)
+                      forge-plugins-pullreq-approvals--prefetched)))
+    (remhash (oref topic id) forge-plugins-pullreq-approvals--prefetched)
+    (if (and pre (equal (car pre) head-rev))
+        (forge-plugins-pullreq-approvals--store
+         topic head-rev required
+         (forge-plugins-pullreq-approvals--count-approved (cdr pre)))
+      (forge-plugins-pullreq-approvals--fetch-reviews-rest
+       topic head-rev required))))
+
+(defun forge-plugins-pullreq-approvals--fetch-reviews-rest
+    (topic head-rev required)
+  "Fetch TOPIC's reviews over REST, see `--fetch-reviews'.
+HEAD-REV and REQUIRED are as there."
   (forge-rest topic "GET" "/repos/:owner/:repo/pulls/:number/reviews" nil
     :unpaginate t
     :callback
@@ -555,6 +606,7 @@ POST is a GitHub pull request."
 The branch's required-count cache is also dropped so a fresh value
 is read on the next fetch."
   (remhash (oref topic id) forge-plugins-pullreq-approvals--cache)
+  (remhash (oref topic id) forge-plugins-pullreq-approvals--prefetched)
   (remhash (forge-plugins-pullreq-approvals--required-key topic)
            forge-plugins-pullreq-approvals--required-cache))
 
@@ -668,6 +720,11 @@ request currently displayed."
 
 (when forge-plugins-pullreq-approvals-enable
   (forge-plugins-pullreq-approvals-enable))
+
+(forge-plugins-prefetch-register
+ 'pullreq-approvals 'forge-plugins-pullreq-approvals-enable
+ forge-plugins-pullreq-approvals--prefetch-fields
+ #'forge-plugins-pullreq-approvals--prefetch)
 
 ;;;###autoload
 (defun forge-plugins-pullreq-approvals-show-errors ()

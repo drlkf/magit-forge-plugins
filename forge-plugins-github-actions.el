@@ -33,6 +33,9 @@
 (require 'ansi-color)
 (require 'cl-lib)
 (require 'forge-plugins-log)
+(require 'forge-plugins-prefetch)
+
+(defvar forge-plugins-github-actions-enable)
 (require 'package)
 (require 'transient)
 
@@ -395,6 +398,73 @@ ghub concatenates each page's object, so `check_runs' repeats per page."
                  forge-plugins-github-actions--cache)
         (forge-plugins-github-actions--fetch-done)
         (forge-plugins-github-actions--note-pending topic)))))
+
+(defun forge-plugins-github-actions--context-run (node)
+  "Return NODE, a GraphQL CheckRun, as a REST-shaped check run alist.
+Return nil for other check contexts, which lack a `name'."
+  (when (alist-get 'name node)
+    (cl-flet ((enum (key) (when-let* ((v (alist-get key node)))
+                            (downcase v))))
+      `((name . ,(alist-get 'name node))
+        (status . ,(enum 'status))
+        (conclusion . ,(enum 'conclusion))
+        (html_url . ,(alist-get 'detailsUrl node))
+        (details_url . ,(alist-get 'detailsUrl node))
+        (id . ,(alist-get 'databaseId node))
+        (started_at . ,(alist-get 'startedAt node))
+        (completed_at . ,(alist-get 'completedAt node))))))
+
+(defun forge-plugins-github-actions--prefetch (repo data)
+  "Fill the check-run cache from pull request DATA of REPO.
+DATA carries the `commits' field of
+`forge-plugins-github-actions--prefetch-fields'.  Do nothing when the
+check runs are truncated or not those of the head commit, so the REST
+fetch runs."
+  (let* ((commit (alist-get 'commit
+                            (car (alist-get 'nodes (alist-get 'commits data)))))
+         (head-rev (alist-get 'headRefOid data))
+         (contexts (alist-get 'contexts (alist-get 'statusCheckRollup commit))))
+    (when (and head-rev
+               (equal head-rev (alist-get 'oid commit))
+               (not (alist-get 'hasNextPage (alist-get 'pageInfo contexts))))
+      (let ((runs (delq nil (mapcar #'forge-plugins-github-actions--context-run
+                                    (alist-get 'nodes contexts))))
+            (success 0) (failure 0) (skipped 0) (completed 0))
+        (dolist (run runs)
+          (when (equal (alist-get 'status run) "completed")
+            (cl-incf completed)
+            (let ((conclusion (alist-get 'conclusion run)))
+              (cond
+               ((equal conclusion "success") (cl-incf success))
+               ((member conclusion '("failure" "timed_out" "action_required"))
+                (cl-incf failure))
+               ((equal conclusion "skipped") (cl-incf skipped))))))
+        (puthash (forge--object-id 'forge-pullreq repo (alist-get 'number data))
+                 (list :head-rev head-rev
+                       :total (length runs)
+                       :success success
+                       :failure failure
+                       :skipped skipped
+                       :completed completed
+                       :runs runs
+                       :fetching nil)
+                 forge-plugins-github-actions--cache)))))
+
+(defconst forge-plugins-github-actions--prefetch-fields
+  '((commits [(last 1)]
+             (nodes
+              (commit
+               oid
+               (statusCheckRollup
+                (contexts [(first 100)]
+                          (pageInfo hasNextPage)
+                          (nodes "... on CheckRun { name status conclusion detailsUrl databaseId startedAt completedAt }\n")))))))
+  "pullRequest fields fetched with `forge-pull' for check runs.")
+
+(forge-plugins-prefetch-register
+ 'github-actions 'forge-plugins-github-actions-enable
+ forge-plugins-github-actions--prefetch-fields
+ #'forge-plugins-github-actions--prefetch)
 
 (defun forge-plugins-github-actions--insert-faced (text face)
   "Insert TEXT and overlay it with FACE so it renders above section highlight.
